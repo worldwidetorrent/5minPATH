@@ -1,12 +1,16 @@
-"""Deterministic writers for canonical persisted datasets."""
+"""Deterministic writers for canonical persisted datasets and replay artifacts."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
-from typing import Iterable
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping, Sequence
 
+from rtds.core.time import format_utc
 from rtds.schemas.window_reference import WindowReferenceRecord
 from rtds.storage.parquet_layout import window_reference_part_path
 
@@ -69,7 +73,7 @@ class WindowReferenceWriter:
 
             with output_path.open("w", encoding="utf-8", newline="\n") as handle:
                 for record in partition_records:
-                    handle.write(_json_dumps_stable(record.to_storage_dict()))
+                    handle.write(json_dumps_stable(record.to_storage_dict()))
                     handle.write("\n")
                     total_rows += 1
 
@@ -84,11 +88,126 @@ class WindowReferenceWriter:
         )
 
 
-def _json_dumps_stable(payload: dict[str, object]) -> str:
+def json_dumps_stable(payload: Any) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def serialize_value(value: object) -> Any:
+    """Convert common dataclass, datetime, and Decimal values to storage-safe objects."""
+
+    if isinstance(value, datetime):
+        return format_utc(value)
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, MappingProxyType):
+        return {key: serialize_value(item) for key, item in dict(value).items()}
+    if isinstance(value, Mapping):
+        return {str(key): serialize_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [serialize_value(item) for item in value]
+    if isinstance(value, list):
+        return [serialize_value(item) for item in value]
+    if is_dataclass(value):
+        return {key: serialize_value(item) for key, item in asdict(value).items()}
+    return value
+
+
+def write_jsonl_rows(
+    path: str | Path,
+    rows: Iterable[Mapping[str, object] | object],
+) -> Path:
+    """Write stable JSONL rows to one file."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            if isinstance(row, Mapping):
+                payload = {str(key): serialize_value(value) for key, value in row.items()}
+            else:
+                payload = serialize_value(row)
+            handle.write(json_dumps_stable(payload))
+            handle.write("\n")
+    return output_path
+
+
+def write_json_file(path: str | Path, payload: Mapping[str, object] | object) -> Path:
+    """Write one stable JSON payload."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = (
+        {str(key): serialize_value(value) for key, value in payload.items()}
+        if isinstance(payload, Mapping)
+        else serialize_value(payload)
+    )
+    output_path.write_text(
+        f"{json_dumps_stable(serialized)}\n",
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def write_csv_rows(
+    path: str | Path,
+    rows: Sequence[Mapping[str, object]],
+    *,
+    fieldnames: Sequence[str] | None = None,
+) -> Path:
+    """Write a stable CSV file from mapping rows."""
+
+    import csv
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_fieldnames = list(fieldnames or _infer_fieldnames(rows))
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=resolved_fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    key: _csv_cell(serialize_value(row.get(key)))
+                    for key in resolved_fieldnames
+                }
+            )
+    return output_path
+
+
+def write_text_file(path: str | Path, text: str) -> Path:
+    """Write one UTF-8 text artifact with a trailing newline."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = text if text.endswith("\n") else f"{text}\n"
+    output_path.write_text(normalized, encoding="utf-8")
+    return output_path
+
+
+def _infer_fieldnames(rows: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+    fieldnames: set[str] = set()
+    for row in rows:
+        fieldnames.update(str(key) for key in row)
+    return tuple(sorted(fieldnames))
+
+
+def _csv_cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return json_dumps_stable(value)
+    if isinstance(value, dict):
+        return json_dumps_stable(value)
+    return str(value)
 
 
 __all__ = [
     "ReferenceWriteResult",
     "WindowReferenceWriter",
+    "json_dumps_stable",
+    "serialize_value",
+    "write_csv_rows",
+    "write_json_file",
+    "write_jsonl_rows",
+    "write_text_file",
 ]

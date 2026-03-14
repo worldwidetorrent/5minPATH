@@ -21,6 +21,8 @@ Current implementation notes:
 
 - the persisted snapshot row is `SnapshotRecord` in `src/rtds/schemas/snapshot.py`
 - current `SnapshotRecord` covers identity, window/reference fields, current Chainlink state, composite state, Polymarket executable quote state, and snapshot-level quality flags
+- the canonical replay runner is `src/rtds/cli/replay_day.py`; it writes deterministic run artifacts under `artifacts/replay/YYYY-MM-DD/run_<timestamp>/`
+- current replay artifacts are JSONL, CSV, JSON, and Markdown rather than parquet
 - offline truth is attached later by `src/rtds/replay/attach_labels.py`; labels are not currently stored inside `SnapshotRecord`
 - volatility, baseline fair value, executable edge, simulation outputs, and replay slices are currently represented as separate objects in their own modules rather than persisted as snapshot columns
 - timing-derived fields such as `seconds_elapsed`, `seconds_remaining`, and `window_progress` are not yet stored on the snapshot row, even though downstream replay code computes or consumes equivalent timing state
@@ -90,6 +92,29 @@ Phase-1 recommendation:
 - optional event-driven snapshots on material market, oracle, or quality changes
 
 Regardless of cadence, the row schema remains the same.
+
+## 5.1 Current phase-1 run contract
+
+The current canonical replay run writes a deterministic folder shaped like:
+
+```text
+artifacts/replay/YYYY-MM-DD/run_<timestamp>/
+  config_effective.yaml
+  reference/
+    window_reference/date=YYYY-MM-DD/part-00000.jsonl
+  snapshots/
+    snapshots.jsonl
+    labeled_snapshots.jsonl
+  simulation/
+    trades.jsonl
+    summary.json
+  slices/
+    by_<dimension>.csv
+  report/
+    report.md
+```
+
+This is a phase-1 execution contract, not the final storage format. The design intent below still allows later migration to parquet or a wider persisted snapshot table.
 
 ## 6. Column groups
 

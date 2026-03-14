@@ -40,6 +40,7 @@ Current implementation notes:
 
 - the persisted row is `WindowReferenceRecord` in `src/rtds/schemas/window_reference.py`
 - rows are currently written as deterministic JSONL partitions by `src/rtds/storage/writer.py`, not parquet
+- the canonical replay runner can either rebuild these rows from metadata candidates plus Chainlink ticks or load them from `data/reference/window_reference/date=YYYY-MM-DD/`
 - the persisted schema uses explicit venue-side names such as `polymarket_market_id`, `polymarket_event_id`, and `polymarket_slug`
 - the current schema does not yet persist `window_type`, `market_title`, `market_status`, `duration_seconds`, `market_open_ts`, or `market_close_ts`
 - market discovery metadata does capture `market_title`, `market_status`, `market_open_ts`, and `market_close_ts`, but those fields are not yet carried through into the persisted window-reference row

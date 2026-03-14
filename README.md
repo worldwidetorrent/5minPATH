@@ -14,7 +14,7 @@ That question sounds small. It is not.
 
 ## Current status
 
-The architecture described in this README is still the target design. The codebase has implemented the core research spine, but not the full end-to-end live/replay workflow yet.
+The architecture described in this README is still the target design. The codebase now implements the core research spine and one canonical replay-day execution path, but it still does not implement the full live collection stack.
 
 Implemented today:
 
@@ -28,14 +28,17 @@ Implemented today:
 - freshness, dispersion, and gap-quality modules
 - composite nowcast, volatility, baseline fair value, and executable edge
 - snapshot assembly, offline label attachment, taker-only replay simulation, and slice analysis
+- canonical `replay_day` runner with deterministic artifact output
+- integration coverage for the replay-day artifact contract
 
-Not yet wired end to end:
+Not yet implemented end to end:
 
-- collector, snapshot-build, replay-day, and evaluate CLIs are still placeholders
+- live collector workflow is still a placeholder
+- dedicated `build_snapshots` CLI is still a placeholder
 - raw event schemas are still conceptual rather than fully implemented in code
 - Chainlink normalization is still a placeholder
 - execution/fill schemas are still a placeholder
-- integration tests are still skipped placeholders
+- most raw and normalized datasets are still expected as prebuilt JSONL inputs rather than being produced by a live ingestion path
 
 When the code is narrower than the design described below, the design should be read as the intended architecture and the narrower implementation as the current phase-1 state.
 
@@ -596,23 +599,26 @@ If it cannot, even a clever formula is decorative.
 
 ## 18. Current status
 
-Current status: **schema and architecture phase**.
+Current status: **research-spine and replay-runner phase**.
 
-Already drafted:
+Implemented:
 
-- canonical schema spine,
-- window reference schema,
-- replay snapshot schema,
-- raw/normalized feed schema,
-- ADRs for window IDs, composite method, and snapshot cadence.
+- canonical schema spine and shared core utilities
+- deterministic window mapping and Chainlink anchor assignment
+- persisted `window_reference` dataset writes
+- normalized exchange and Polymarket quote state
+- quality, composite, volatility, fair-value, and executable-edge modules
+- snapshot assembly, labeling, simulation, and slice analysis
+- canonical `replay_day` runner and replay artifact contract
+- ADRs for window IDs, composite method, and snapshot cadence
 
 Immediate next work:
 
-- implement `core/` types and ID utilities,
-- implement first collectors,
-- implement raw storage and normalization,
-- generate the first real window reference table,
-- build the first golden replay snapshots.
+- implement the remaining live collection and raw-normalization path,
+- replace placeholder Chainlink normalization,
+- persist more replay-facing datasets beyond `window_reference`,
+- run one real replay day and review the first research report,
+- define the first explicit deploy/no-trade policy.
 
 ---
 

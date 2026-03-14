@@ -54,6 +54,7 @@ Current implementation notes:
 - normalized exchange quote state is implemented for Binance, Coinbase, and Kraken in `src/rtds/schemas/normalized.py` and `src/rtds/normalizers/exchange.py`
 - normalized Polymarket executable quote state is implemented in `src/rtds/schemas/normalized.py` and `src/rtds/normalizers/polymarket.py`
 - Polymarket metadata discovery currently includes both raw metadata capture and candidate normalization in `src/rtds/collectors/polymarket/metadata.py`
+- the canonical replay runner currently loads normalized JSONL datasets from `data/normalized/...` rather than invoking live collectors
 - unified raw event schemas in `src/rtds/schemas/raw_events.py` are still a placeholder
 - Chainlink normalization in `src/rtds/normalizers/chainlink.py` is still a placeholder
 - collector CLIs and live collection workflows are still placeholders, so the repo does not yet materialize the full raw and normalized datasets described below
