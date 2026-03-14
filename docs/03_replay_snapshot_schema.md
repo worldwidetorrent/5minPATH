@@ -3,7 +3,7 @@
 Status: Draft  
 Owners: Research / Data  
 Version: 0.1.0  
-Last Updated: 2026-03-13
+Last Updated: 2026-03-14
 
 ## 1. Purpose
 
@@ -12,6 +12,22 @@ This document defines the replay snapshot schema: the modeling table used to com
 This is not the whole project schema. This is the research-facing state table that sits on top of the canonical schema spine and the window reference layer.
 
 A replay snapshot must represent only information that was knowable at the snapshot timestamp. That is the central design constraint.
+
+## 1.1 Implementation status and current deviations
+
+This document remains the target design for the replay snapshot table. The current code implements a phase-1 snapshot schema and replay stack, but not the full wide-table design described below.
+
+Current implementation notes:
+
+- the persisted snapshot row is `SnapshotRecord` in `src/rtds/schemas/snapshot.py`
+- current `SnapshotRecord` covers identity, window/reference fields, current Chainlink state, composite state, Polymarket executable quote state, and snapshot-level quality flags
+- offline truth is attached later by `src/rtds/replay/attach_labels.py`; labels are not currently stored inside `SnapshotRecord`
+- volatility, baseline fair value, executable edge, simulation outputs, and replay slices are currently represented as separate objects in their own modules rather than persisted as snapshot columns
+- timing-derived fields such as `seconds_elapsed`, `seconds_remaining`, and `window_progress` are not yet stored on the snapshot row, even though downstream replay code computes or consumes equivalent timing state
+- per-venue exchange state is currently stored as mappings such as `composite_per_venue_mids` and `composite_per_venue_ages`, not as fully exploded wide columns
+- several planned fields in this document, including calibrated fair value and full execution-cost state, are still design intent rather than implemented snapshot columns
+
+These differences should be read as phase-1 scoping decisions. The original design goal remains a fully knowable-at-time replay state table that can support fair value, replay, calibration, and evaluation.
 
 ## 2. Why this table exists
 

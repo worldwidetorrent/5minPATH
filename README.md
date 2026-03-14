@@ -12,6 +12,33 @@ This repository exists to answer a very specific question with high discipline:
 
 That question sounds small. It is not.
 
+## Current status
+
+The architecture described in this README is still the target design. The codebase has implemented the core research spine, but not the full end-to-end live/replay workflow yet.
+
+Implemented today:
+
+- canonical core IDs, enums, time and validation utilities
+- Polymarket metadata discovery and candidate normalization
+- deterministic market-to-window mapping
+- deterministic Chainlink open/settle assignment
+- persisted `window_reference` dataset writes
+- normalized Binance/Coinbase/Kraken quote state
+- normalized Polymarket executable quote state
+- freshness, dispersion, and gap-quality modules
+- composite nowcast, volatility, baseline fair value, and executable edge
+- snapshot assembly, offline label attachment, taker-only replay simulation, and slice analysis
+
+Not yet wired end to end:
+
+- collector, snapshot-build, replay-day, and evaluate CLIs are still placeholders
+- raw event schemas are still conceptual rather than fully implemented in code
+- Chainlink normalization is still a placeholder
+- execution/fill schemas are still a placeholder
+- integration tests are still skipped placeholders
+
+When the code is narrower than the design described below, the design should be read as the intended architecture and the narrower implementation as the current phase-1 state.
+
 To answer it correctly, the system has to know:
 
 - the correct **Chainlink open anchor** for the exact 5-minute window,

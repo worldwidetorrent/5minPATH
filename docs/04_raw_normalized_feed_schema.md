@@ -3,7 +3,7 @@
 Status: Draft  
 Owners: Research / Data  
 Version: 0.1.0  
-Last Updated: 2026-03-13
+Last Updated: 2026-03-14
 
 ## 1. Purpose
 
@@ -44,6 +44,22 @@ This document does not define:
 - replay feature columns
 - execution simulation rules
 - long-term warehouse optimization
+
+## 2.1 Implementation status and current deviations
+
+This document remains the target design for the raw and normalized feed layers. The current code implements only part of that design.
+
+Current implementation notes:
+
+- normalized exchange quote state is implemented for Binance, Coinbase, and Kraken in `src/rtds/schemas/normalized.py` and `src/rtds/normalizers/exchange.py`
+- normalized Polymarket executable quote state is implemented in `src/rtds/schemas/normalized.py` and `src/rtds/normalizers/polymarket.py`
+- Polymarket metadata discovery currently includes both raw metadata capture and candidate normalization in `src/rtds/collectors/polymarket/metadata.py`
+- unified raw event schemas in `src/rtds/schemas/raw_events.py` are still a placeholder
+- Chainlink normalization in `src/rtds/normalizers/chainlink.py` is still a placeholder
+- collector CLIs and live collection workflows are still placeholders, so the repo does not yet materialize the full raw and normalized datasets described below
+- persisted storage is currently implemented for the `window_reference` dataset; raw and normalized dataset writers are not yet implemented
+
+These are implementation gaps, not changes in architectural direction. The design intent here still governs how the raw and normalized layers should be completed.
 
 ## 3. Design principles
 

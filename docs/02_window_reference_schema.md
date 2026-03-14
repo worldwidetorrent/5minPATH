@@ -3,7 +3,7 @@
 Status: Draft  
 Owners: Research / Data  
 Version: 0.1.0  
-Last Updated: 2026-03-13
+Last Updated: 2026-03-14
 
 ## 1. Purpose
 
@@ -31,6 +31,21 @@ This document defines:
 - invariants and fallback handling
 
 This document does not define the replay snapshot table itself. It defines the reference data that snapshots depend on.
+
+## 2.1 Implementation status and current deviations
+
+This document remains the target design for the window-reference layer. The current code implements the core mapping and anchor-assignment behavior, but the persisted schema is intentionally narrower in a few places.
+
+Current implementation notes:
+
+- the persisted row is `WindowReferenceRecord` in `src/rtds/schemas/window_reference.py`
+- rows are currently written as deterministic JSONL partitions by `src/rtds/storage/writer.py`, not parquet
+- the persisted schema uses explicit venue-side names such as `polymarket_market_id`, `polymarket_event_id`, and `polymarket_slug`
+- the current schema does not yet persist `window_type`, `market_title`, `market_status`, `duration_seconds`, `market_open_ts`, or `market_close_ts`
+- market discovery metadata does capture `market_title`, `market_status`, `market_open_ts`, and `market_close_ts`, but those fields are not yet carried through into the persisted window-reference row
+- anchor and settle quality are represented separately from mapping quality via `chainlink_open_anchor_*`, `chainlink_settle_*`, `assignment_status`, and `assignment_diagnostics`
+
+These are implementation deviations, not design reversals. The original intent of the reference layer as the canonical join table for mapping and oracle-boundary truth is unchanged.
 
 ## 3. Grain
 
