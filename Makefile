@@ -9,7 +9,7 @@ lint:
 	$(PYTHON) -m ruff check src tests
 
 collect:
-	$(PYTHON) -m rtds.cli.collect
+	./scripts/run_collectors.sh
 
 build-snapshots:
 	$(PYTHON) -m rtds.cli.build_snapshots
@@ -19,4 +19,3 @@ replay:
 
 evaluate:
 	$(PYTHON) -m rtds.cli.evaluate
-
