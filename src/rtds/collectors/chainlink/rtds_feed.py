@@ -1,0 +1,2 @@
+"""Chainlink RTDS feed collector."""
+

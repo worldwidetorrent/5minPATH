@@ -1,0 +1,4 @@
+taker_fee_bps: 0
+slippage_buffer_bps: 10
+model_uncertainty_bps: 15
+

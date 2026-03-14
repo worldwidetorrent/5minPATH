@@ -1,0 +1,2 @@
+"""OKX websocket collector."""
+

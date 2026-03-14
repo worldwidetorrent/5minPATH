@@ -1,0 +1,5 @@
+venue: chainlink
+kind: oracle
+enabled: true
+product: rtds
+

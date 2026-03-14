@@ -1,0 +1,35 @@
+{
+  "market_id": "0xbtc1210",
+  "event_ts": "2026-03-13T12:07:03.250Z",
+  "sequence_id": "pmq-1001",
+  "token_yes_id": "btc1210-yes",
+  "token_no_id": "btc1210-no",
+  "outcomes": {
+    "up": {
+      "bid": {
+        "price": "0.28",
+        "size": "250"
+      },
+      "ask": {
+        "price": "0.31",
+        "size": "180"
+      }
+    },
+    "down": {
+      "bid": {
+        "price": "0.70",
+        "size": "320"
+      },
+      "ask": {
+        "price": "0.73",
+        "size": "210"
+      }
+    }
+  },
+  "last_trade": {
+    "price": "0.30",
+    "size_contracts": "50",
+    "side": "buy",
+    "outcome": "yes"
+  }
+}

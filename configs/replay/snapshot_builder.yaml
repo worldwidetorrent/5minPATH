@@ -1,0 +1,4 @@
+snapshot_cadence_ms: 250
+book_depth_levels: 5
+require_anchor: true
+

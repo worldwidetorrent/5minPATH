@@ -1,0 +1,28 @@
+{
+  "market_id": "0xbtc1215",
+  "sequence_id": "pmq-1002",
+  "clob_token_id_up": "btc1215-yes",
+  "clob_token_id_down": "btc1215-no",
+  "outcomes": {
+    "yes": {
+      "bid": {
+        "price": "0.46",
+        "size": "140"
+      },
+      "ask": {
+        "price": "0.49",
+        "size": "130"
+      }
+    },
+    "no": {
+      "bid": {
+        "price": "0.51",
+        "size": "160"
+      },
+      "ask": {
+        "price": "0.54",
+        "size": "120"
+      }
+    }
+  }
+}

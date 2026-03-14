@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "testingproject"
+version = "0.1.0"
+description = "Research and replay system for oracle-anchored BTC binary markets."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Codex" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.11",
+  "mypy>=1.11",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rtds"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/README.md",
+  "/pyproject.toml",
+  "/src/rtds",
+  "/tests",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = ["src"]
+packages = ["rtds"]
+warn_unused_configs = true

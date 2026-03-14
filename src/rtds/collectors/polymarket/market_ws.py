@@ -1,0 +1,2 @@
+"""Polymarket market-data collector."""
+

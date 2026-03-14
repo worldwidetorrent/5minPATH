@@ -1,0 +1,5 @@
+venue: bybit
+kind: exchange
+enabled: true
+product: spot
+

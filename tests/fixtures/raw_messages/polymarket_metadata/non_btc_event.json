@@ -1,0 +1,23 @@
+{
+  "id": "event-eth-1210",
+  "title": "Ethereum Up or Down - Mar 13, 12:10PM UTC",
+  "slug": "eth-up-or-down-mar-13-1210pm-utc",
+  "category": "Crypto",
+  "subcategory": "Ethereum",
+  "active": true,
+  "closed": false,
+  "markets": [
+    {
+      "id": "gamma-market-eth-1210",
+      "conditionId": "0xeth1210",
+      "question": "Will Ethereum be up or down in the next 5 minutes?",
+      "slug": "eth-up-or-down-mar-13-1210pm-utc",
+      "startDate": "2026-03-13T12:05:00Z",
+      "endDate": "2026-03-13T12:10:00Z",
+      "active": true,
+      "closed": false,
+      "clobTokenIds": ["eth1210-yes", "eth1210-no"],
+      "resolutionSource": "Chainlink ETH/USD"
+    }
+  ]
+}

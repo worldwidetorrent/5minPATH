@@ -1,0 +1,26 @@
+{
+  "id": "event-btc-1210",
+  "title": "Bitcoin Up or Down - Mar 13, 12:10PM UTC",
+  "slug": "btc-up-or-down-mar-13-1210pm-utc",
+  "category": "Crypto",
+  "subcategory": "Bitcoin",
+  "active": true,
+  "closed": false,
+  "markets": [
+    {
+      "id": "gamma-market-1210",
+      "conditionId": "0xbtc1210",
+      "question": "Will Bitcoin be up or down in the next 5 minutes?",
+      "slug": "btc-up-or-down-mar-13-1210pm-utc",
+      "startDate": "2026-03-13T12:05:00Z",
+      "endDate": "2026-03-13T12:10:00Z",
+      "active": true,
+      "closed": false,
+      "archived": false,
+      "clobTokenIds": ["btc1210-yes", "btc1210-no"],
+      "resolutionSource": "Chainlink BTC/USD",
+      "description": "Resolves to whether BTC is up or down over the 5 minute interval.",
+      "source": "Polymarket"
+    }
+  ]
+}

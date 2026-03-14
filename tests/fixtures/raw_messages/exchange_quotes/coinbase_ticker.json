@@ -1,0 +1,19 @@
+{
+  "channel": "ticker",
+  "timestamp": "2026-03-13T12:07:03.120Z",
+  "sequence_num": 5401,
+  "events": [
+    {
+      "type": "update",
+      "tickers": [
+        {
+          "product_id": "BTC-USD",
+          "best_bid": "83185.70",
+          "best_ask": "83186.10",
+          "best_bid_quantity": "0.55",
+          "best_ask_quantity": "0.42"
+        }
+      ]
+    }
+  ]
+}

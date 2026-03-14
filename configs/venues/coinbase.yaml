@@ -1,0 +1,5 @@
+venue: coinbase
+kind: exchange
+enabled: true
+product: spot
+

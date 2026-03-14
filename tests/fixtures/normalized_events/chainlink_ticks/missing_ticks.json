@@ -1,0 +1,12 @@
+[
+  {
+    "event_id": "cl-open-too-late",
+    "event_ts": "2026-03-13T12:05:11Z",
+    "price": "84001.00"
+  },
+  {
+    "event_id": "cl-settle-too-early",
+    "event_ts": "2026-03-13T12:09:49Z",
+    "price": "84018.00"
+  }
+]

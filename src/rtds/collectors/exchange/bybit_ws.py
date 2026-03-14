@@ -1,0 +1,2 @@
+"""Bybit websocket collector."""
+

@@ -1,0 +1,17 @@
+[
+  {
+    "event_id": "cl-open-before",
+    "event_ts": "2026-03-13T12:04:58.500Z",
+    "price": "83998.50"
+  },
+  {
+    "event_id": "cl-mid-120700",
+    "event_ts": "2026-03-13T12:07:00Z",
+    "price": "84005.00"
+  },
+  {
+    "event_id": "cl-settle-before",
+    "event_ts": "2026-03-13T12:09:57.500Z",
+    "price": "84015.00"
+  }
+]

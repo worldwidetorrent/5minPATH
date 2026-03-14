@@ -1,0 +1,5 @@
+max_composite_age_ms: 1500
+max_oracle_age_ms: 5000
+max_spread_bps: 150
+min_active_venues: 2
+

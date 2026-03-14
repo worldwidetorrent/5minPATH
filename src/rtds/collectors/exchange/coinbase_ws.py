@@ -1,0 +1,2 @@
+"""Coinbase websocket collector."""
+

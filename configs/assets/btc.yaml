@@ -1,0 +1,5 @@
+asset: BTC
+quote_currency: USD
+window_seconds: 300
+oracle_source: chainlink
+

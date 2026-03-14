@@ -1,0 +1,5 @@
+venue: kraken
+kind: exchange
+enabled: true
+product: spot
+

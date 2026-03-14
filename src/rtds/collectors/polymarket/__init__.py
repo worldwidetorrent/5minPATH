@@ -1,0 +1,2 @@
+"""Polymarket collector package."""
+

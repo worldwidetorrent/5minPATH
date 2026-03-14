@@ -1,0 +1,5 @@
+venue: binance
+kind: exchange
+enabled: true
+product: spot
+

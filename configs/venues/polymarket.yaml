@@ -1,0 +1,5 @@
+venue: polymarket
+kind: prediction_market
+enabled: true
+product: binary
+
