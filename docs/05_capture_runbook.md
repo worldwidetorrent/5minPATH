@@ -62,7 +62,9 @@ Optional resilience tuning:
   --max-fetch-retries 3 \
   --base-backoff-seconds 0.5 \
   --max-backoff-seconds 5 \
-  --max-consecutive-polymarket-failures 3
+  --max-consecutive-polymarket-failures 3 \
+  --max-consecutive-polymarket-failures-in-grace 5 \
+  --polymarket-rollover-grace-seconds 90
 ```
 
 ## Stop
@@ -104,6 +106,7 @@ Healthy collectors produce log lines showing:
 - one or more Polymarket quotes captured for the currently selected admitted family market
 - retry warnings only when a source is recovering, not on every sample
 - degraded samples are logged explicitly when one source is temporarily impaired
+- Polymarket 404s near rollover trigger metadata refresh and selector re-evaluation before the session treats the binding as invalid
 - one summary artifact path
 
 Non-empty output means:
@@ -138,6 +141,7 @@ For a smoke session, confirm:
 - `selector_diagnostics.candidate_count`, `admitted_count`, and `rejected_count_by_reason` are present in the summary artifact
 - `selector_diagnostics.selected_window_id` is a canonical `btc-5m-...` window
 - `session_diagnostics.empty_book_count`, `retry_count_by_source`, `retry_exhaustion_count_by_source`, and `termination_reason` are present in the summary artifact
+- `session_diagnostics.polymarket_failure_count_by_class`, `polymarket_selector_refresh_count`, `polymarket_selector_rebind_count`, and `polymarket_rollover_grace_sample_count` are present in the summary artifact
 - `data/raw/chainlink/...` has non-empty rows with stamped `recv_ts`
 - `data/normalized/exchange_quotes/...` contains non-empty `binance`, `coinbase`, and `kraken` rows
 - `data/normalized/market_metadata_events/...` contains only admitted target-family rows, with slugs like `btc-updown-5m-<epoch>`
@@ -148,3 +152,4 @@ For a hardened pilot, also confirm:
 - `session_diagnostics.termination_reason` is `completed`
 - `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
 - any `degraded_empty_book` sample does not terminate the session by itself
+- any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`

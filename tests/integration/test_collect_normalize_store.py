@@ -136,7 +136,11 @@ def test_phase1_capture_writes_frozen_raw_and_normalized_layouts(
     )
     monkeypatch.setattr(
         "rtds.collectors.phase1_capture._collect_polymarket_quote",
-        lambda config, selected_market, selected_window_id, logger: SourceCaptureResult(
+        lambda config,
+        selected_market,
+        selected_window_id,
+        current_ts=None,
+        logger=None: SourceCaptureResult(
             source_name="polymarket_quotes",
             status="success",
             raw_rows=(

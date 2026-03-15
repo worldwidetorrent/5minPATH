@@ -56,7 +56,7 @@ Current implementation notes:
 - Polymarket metadata discovery currently includes both raw metadata capture and candidate normalization in `src/rtds/collectors/polymarket/metadata.py`
 - a sanctioned phase-1 capture workflow now materializes real files under `data/raw/...` and `data/normalized/...` via `./scripts/run_collectors.sh`, either as a one-shot pass or a bounded smoke-test session
 - the current capture implementation writes `market_metadata_events`, `chainlink_ticks`, `exchange_quotes`, and `polymarket_quotes` JSONL partitions directly, admits only exact BTC 5-minute Up/Down family metadata rows, and records selector diagnostics in the session summary artifact
-- the bounded capture path now records per-sample diagnostics under `artifacts/collect/.../sample_diagnostics.jsonl`, retries transient external fetches with bounded backoff, and treats empty Polymarket books as degraded capture states rather than fatal exceptions
+- the bounded capture path now records per-sample diagnostics under `artifacts/collect/.../sample_diagnostics.jsonl`, retries transient external fetches with bounded backoff, treats empty Polymarket books as degraded capture states rather than fatal exceptions, and uses rollover-aware Polymarket selector refresh before declaring a market binding invalid
 - the canonical replay runner currently loads normalized JSONL datasets from `data/normalized/...` rather than invoking live collectors
 - unified raw event schemas in `src/rtds/schemas/raw_events.py` are still a placeholder
 - Chainlink normalization in `src/rtds/normalizers/chainlink.py` is still a placeholder

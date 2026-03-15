@@ -182,7 +182,13 @@ def test_run_phase1_capture_repeats_samples_for_bounded_session(
             ),
         )
 
-    def collect_polymarket(config, selected_market, selected_window_id, logger):
+    def collect_polymarket(
+        config,
+        selected_market,
+        selected_window_id,
+        current_ts=None,
+        logger=None,
+    ):
         index = sample_index["value"]
         return SourceCaptureResult(
             source_name="polymarket_quotes",
@@ -310,7 +316,13 @@ def test_run_phase1_capture_keeps_running_after_empty_book_sample(
             ),
         )
 
-    def collect_polymarket(config, selected_market, selected_window_id, logger):
+    def collect_polymarket(
+        config,
+        selected_market,
+        selected_window_id,
+        current_ts=None,
+        logger=None,
+    ):
         index = sample_index["value"]
         if index == 2:
             return SourceCaptureResult(
@@ -325,6 +337,7 @@ def test_run_phase1_capture_keeps_running_after_empty_book_sample(
                     },
                 ),
                 normalized_rows=(),
+                failure_class="degraded_empty_book",
                 details={"empty_sides": ["up_bid"], "selected_window_id": selected_window_id},
             )
         return SourceCaptureResult(
@@ -390,6 +403,10 @@ def test_run_phase1_capture_keeps_running_after_empty_book_sample(
     degraded_row = json.loads(diagnostics_rows[1])
     assert degraded_row["sample_status"] == "degraded"
     assert degraded_row["degraded_sources"] == ["polymarket_quotes"]
+    assert (
+        degraded_row["source_results"]["polymarket_quotes"]["failure_class"]
+        == "degraded_empty_book"
+    )
 
 
 def test_run_with_retries_retries_then_succeeds(monkeypatch) -> None:
@@ -435,6 +452,290 @@ def test_run_with_retries_allows_http_payload_with_empty_error_list() -> None:
 
     assert result.status == "success"
     assert result.payload == {"error": [], "result": {"ok": True}}
+
+
+def test_run_phase1_capture_refreshes_polymarket_binding_on_rollover_404(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    active_candidate = replace(
+        _metadata_candidate(),
+        market_slug="btc-updown-5m-1773551400",
+        market_open_ts=datetime(2026, 3, 15, 5, 10, 0, tzinfo=UTC),
+        market_close_ts=datetime(2026, 3, 15, 5, 15, 0, tzinfo=UTC),
+    )
+    next_candidate = replace(
+        active_candidate,
+        market_id="0x" + "4" * 64,
+        market_slug="btc-updown-5m-1773551700",
+        market_open_ts=datetime(2026, 3, 15, 5, 15, 0, tzinfo=UTC),
+        market_close_ts=datetime(2026, 3, 15, 5, 20, 0, tzinfo=UTC),
+        token_yes_id="yes-next",
+        token_no_id="no-next",
+    )
+    metadata_raw = _metadata_raw(active_candidate.market_id)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=active_candidate.market_id,
+        selected_market_slug=active_candidate.market_slug,
+        selected_window_id="btc-5m-20260315T051000Z",
+        candidate_count=2,
+        admitted_count=2,
+        rejected_count_by_reason={},
+    )
+
+    metadata_batches = iter(
+        [
+            (
+                [metadata_raw],
+                [active_candidate, next_candidate],
+                active_candidate,
+                selector_diagnostics,
+            ),
+            (
+                [metadata_raw],
+                [active_candidate, next_candidate],
+                next_candidate,
+                selector_diagnostics,
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_metadata",
+        lambda config, logger: next(metadata_batches),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_ticks",
+        lambda config, logger: SourceCaptureResult(
+            source_name="chainlink",
+            status="success",
+            raw_rows=({"raw_event_id": "chainlink:round:1"},),
+            normalized_rows=(
+                ChainlinkTick(
+                    event_id="chainlink:round:1",
+                    event_ts=datetime(2026, 3, 15, 5, 14, 0, tzinfo=UTC),
+                    price=Decimal("84000.00"),
+                    recv_ts=datetime(2026, 3, 15, 5, 14, 0, tzinfo=UTC),
+                    round_id="1",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_exchange_quotes",
+        lambda config, logger: SourceCaptureResult(
+            source_name="exchange",
+            status="success",
+            raw_rows=({"raw_event_id": "binance:1", "venue_id": "binance"},),
+            normalized_rows=(_binance_quote(1),),
+        ),
+    )
+    selected_candidates = iter([active_candidate, next_candidate])
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._select_market_for_current_time",
+        lambda candidates, current_ts: next(selected_candidates),
+    )
+
+    quote_attempts: list[str] = []
+
+    def collect_polymarket(
+        config,
+        selected_market,
+        selected_window_id,
+        current_ts=None,
+        logger=None,
+    ):
+        quote_attempts.append(selected_market.market_id)
+        if len(quote_attempts) == 1:
+            return SourceCaptureResult(
+                source_name="polymarket_quotes",
+                status="selector_refresh_required",
+                raw_rows=(
+                    {"raw_event_id": "polymarket:404:1", "market_id": selected_market.market_id},
+                ),
+                normalized_rows=(),
+                retries=0,
+                failure_class="selector_refresh_required",
+                failure_type="HTTPError",
+                failure_message="HTTP Error 404: Not Found",
+                http_status=404,
+                details={
+                    "selected_market_id": selected_market.market_id,
+                    "selected_market_slug": selected_market.market_slug,
+                    "selected_window_id": selected_window_id,
+                    "seconds_remaining": 30.0,
+                    "within_rollover_grace_window": True,
+                    "metadata_refresh_attempted": False,
+                    "metadata_refresh_changed_binding": False,
+                },
+            )
+        return SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status="success",
+            raw_rows=(
+                {"raw_event_id": "polymarket:ok:2", "market_id": selected_market.market_id},
+            ),
+            normalized_rows=(
+                _polymarket_quote(1, market_id=selected_market.market_id),
+            ),
+            details={
+                "selected_market_id": selected_market.market_id,
+                "selected_market_slug": selected_market.market_slug,
+                "selected_window_id": selected_window_id,
+                "seconds_remaining": 300.0,
+                "within_rollover_grace_window": False,
+                "metadata_refresh_attempted": False,
+                "metadata_refresh_changed_binding": False,
+            },
+        )
+
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_quote",
+        collect_polymarket,
+    )
+    monotonic_values = iter([0.0, 1.0])
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    result = run_phase1_capture(
+        Phase1CaptureConfig(
+            data_root=tmp_path / "data",
+            artifacts_root=tmp_path / "artifacts",
+            logs_root=tmp_path / "logs",
+            temp_root=tmp_path / "tmp",
+            session_id="test-session",
+            capture_started_at=datetime(2026, 3, 15, 5, 14, 30, tzinfo=UTC),
+            duration_seconds=0.0,
+        ),
+        logger=_logger(),
+    )
+
+    assert result.sample_count == 1
+    assert quote_attempts == [active_candidate.market_id, next_candidate.market_id]
+    assert result.session_diagnostics.polymarket_selector_refresh_count == 1
+    assert result.session_diagnostics.polymarket_selector_rebind_count == 1
+    diagnostics_row = json.loads(
+        result.session_diagnostics.sample_diagnostics_path.read_text(encoding="utf-8").splitlines()[0]
+    )
+    polymarket_diag = diagnostics_row["source_results"]["polymarket_quotes"]
+    assert polymarket_diag["status"] == "success"
+    assert polymarket_diag["details"]["metadata_refresh_attempted"] is True
+    assert polymarket_diag["details"]["metadata_refresh_changed_binding"] is True
+    assert diagnostics_row["selected_market_id"] == next_candidate.market_id
+
+
+def test_run_phase1_capture_stops_when_polymarket_market_is_invalid_after_refresh(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    active_candidate = _metadata_candidate()
+    metadata_raw = _metadata_raw(active_candidate.market_id)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=active_candidate.market_id,
+        selected_market_slug=active_candidate.market_slug,
+        selected_window_id="btc-5m-20260313T120500Z",
+        candidate_count=1,
+        admitted_count=1,
+        rejected_count_by_reason={},
+    )
+
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_metadata",
+        lambda config, logger: (
+            [metadata_raw],
+            [active_candidate],
+            active_candidate,
+            selector_diagnostics,
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_ticks",
+        lambda config, logger: SourceCaptureResult(
+            source_name="chainlink",
+            status="success",
+            raw_rows=({"raw_event_id": "chainlink:round:1"},),
+            normalized_rows=(
+                ChainlinkTick(
+                    event_id="chainlink:round:1",
+                    event_ts=datetime(2026, 3, 15, 1, 0, 0, tzinfo=UTC),
+                    price=Decimal("84000.00"),
+                    recv_ts=datetime(2026, 3, 15, 1, 0, 0, tzinfo=UTC),
+                    round_id="1",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_exchange_quotes",
+        lambda config, logger: SourceCaptureResult(
+            source_name="exchange",
+            status="success",
+            raw_rows=({"raw_event_id": "binance:1", "venue_id": "binance"},),
+            normalized_rows=(_binance_quote(1),),
+        ),
+    )
+
+    def collect_polymarket(
+        config,
+        selected_market,
+        selected_window_id,
+        current_ts=None,
+        logger=None,
+    ):
+        return SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status="terminal_failure",
+            raw_rows=(
+                {"raw_event_id": "polymarket:404:1", "market_id": selected_market.market_id},
+            ),
+            normalized_rows=(),
+            failure_class="market_binding_stale",
+            failure_type="HTTPError",
+            failure_message="HTTP Error 404: Not Found",
+            http_status=404,
+            details={
+                "selected_market_id": selected_market.market_id,
+                "selected_market_slug": selected_market.market_slug,
+                "selected_window_id": selected_window_id,
+                "seconds_remaining": 240.0,
+                "within_rollover_grace_window": False,
+                "metadata_refresh_attempted": False,
+                "metadata_refresh_changed_binding": False,
+            },
+        )
+
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_quote",
+        collect_polymarket,
+    )
+    monotonic_values = iter([0.0, 1.0])
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    result = run_phase1_capture(
+        Phase1CaptureConfig(
+            data_root=tmp_path / "data",
+            artifacts_root=tmp_path / "artifacts",
+            logs_root=tmp_path / "logs",
+            temp_root=tmp_path / "tmp",
+            session_id="test-session",
+            capture_started_at=datetime(2026, 3, 15, 1, 1, 0, tzinfo=UTC),
+            duration_seconds=0.0,
+        ),
+        logger=_logger(),
+    )
+
+    assert result.session_diagnostics.termination_reason == "polymarket_market_invalid"
+    diagnostics_row = json.loads(
+        result.session_diagnostics.sample_diagnostics_path.read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert diagnostics_row["sample_status"] == "failed"
+    polymarket_diag = diagnostics_row["source_results"]["polymarket_quotes"]
+    assert polymarket_diag["failure_class"] == "terminal_invalid_market"
+    assert polymarket_diag["details"]["metadata_refresh_attempted"] is True
 
 
 def _metadata_candidate():

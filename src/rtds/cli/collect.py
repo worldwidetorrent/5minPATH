@@ -16,11 +16,13 @@ from rtds.collectors.phase1_capture import (
     DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE,
     DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES,
     DEFAULT_MAX_FETCH_RETRIES,
     DEFAULT_METADATA_LIMIT,
     DEFAULT_METADATA_PAGES,
     DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS,
     DEFAULT_TIMEOUT_SECONDS,
     Phase1CaptureConfig,
     run_phase1_capture,
@@ -81,6 +83,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-consecutive-polymarket-failures",
         type=int,
         default=DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES,
+    )
+    parser.add_argument(
+        "--max-consecutive-polymarket-failures-in-grace",
+        type=int,
+        default=DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE,
+    )
+    parser.add_argument(
+        "--polymarket-rollover-grace-seconds",
+        type=float,
+        default=DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS,
     )
     parser.add_argument("--prepare-only", action="store_true")
     return parser
@@ -171,6 +183,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_consecutive_chainlink_failures=args.max_consecutive_chainlink_failures,
         max_consecutive_exchange_failures=args.max_consecutive_exchange_failures,
         max_consecutive_polymarket_failures=args.max_consecutive_polymarket_failures,
+        max_consecutive_polymarket_failures_in_grace=(
+            args.max_consecutive_polymarket_failures_in_grace
+        ),
+        polymarket_rollover_grace_seconds=args.polymarket_rollover_grace_seconds,
     )
     try:
         result = run_phase1_capture(config, logger=logger)

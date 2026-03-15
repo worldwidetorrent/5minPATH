@@ -8,7 +8,7 @@ import random
 import socket
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -55,6 +55,8 @@ DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES = 3
+DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE = 5
+DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS = 90.0
 DEFAULT_CHAINLINK_RPC_URL = "https://arb1.arbitrum.io/rpc"
 DEFAULT_CHAINLINK_PROXY_ADDRESS = "0x6ce185860a4963106506C203335A2910413708e9"
 DEFAULT_CHAINLINK_FEED_PAGE_URL = "https://data.chain.link/feeds/arbitrum/mainnet/btc-usd"
@@ -90,6 +92,10 @@ class Phase1CaptureConfig:
     max_consecutive_chainlink_failures: int = DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES
     max_consecutive_exchange_failures: int = DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES
     max_consecutive_polymarket_failures: int = DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES
+    max_consecutive_polymarket_failures_in_grace: int = (
+        DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE
+    )
+    polymarket_rollover_grace_seconds: float = DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS
     chainlink_rpc_url: str = DEFAULT_CHAINLINK_RPC_URL
     chainlink_proxy_address: str = DEFAULT_CHAINLINK_PROXY_ADDRESS
     chainlink_feed_page_url: str = DEFAULT_CHAINLINK_FEED_PAGE_URL
@@ -155,8 +161,10 @@ class SourceCaptureResult:
     raw_rows: tuple[dict[str, object], ...]
     normalized_rows: tuple[object, ...]
     retries: int = 0
+    failure_class: str | None = None
     failure_type: str | None = None
     failure_message: str | None = None
+    http_status: int | None = None
     details: dict[str, object] = field(default_factory=dict)
 
     def to_summary_dict(self) -> dict[str, object]:
@@ -165,8 +173,10 @@ class SourceCaptureResult:
             "retries": self.retries,
             "raw_row_count": len(self.raw_rows),
             "normalized_row_count": len(self.normalized_rows),
+            "failure_class": self.failure_class,
             "failure_type": self.failure_type,
             "failure_message": self.failure_message,
+            "http_status": self.http_status,
             "details": dict(self.details),
         }
 
@@ -215,6 +225,10 @@ class SessionDiagnostics:
     retry_exhaustion_count_by_source: dict[str, int]
     source_failure_count_by_source: dict[str, int]
     max_consecutive_missing_by_source: dict[str, int]
+    polymarket_failure_count_by_class: dict[str, int]
+    polymarket_selector_refresh_count: int
+    polymarket_selector_rebind_count: int
+    polymarket_rollover_grace_sample_count: int
     termination_reason: str
     sample_diagnostics_path: Path
 
@@ -233,9 +247,29 @@ class SessionDiagnostics:
             "max_consecutive_missing_by_source": dict(
                 sorted(self.max_consecutive_missing_by_source.items())
             ),
+            "polymarket_failure_count_by_class": dict(
+                sorted(self.polymarket_failure_count_by_class.items())
+            ),
+            "polymarket_selector_refresh_count": self.polymarket_selector_refresh_count,
+            "polymarket_selector_rebind_count": self.polymarket_selector_rebind_count,
+            "polymarket_rollover_grace_sample_count": self.polymarket_rollover_grace_sample_count,
             "termination_reason": self.termination_reason,
             "sample_diagnostics_path": str(self.sample_diagnostics_path),
         }
+
+
+@dataclass(slots=True, frozen=True)
+class PolymarketQuoteResolution:
+    """Resolved Polymarket quote capture for one sample."""
+
+    result: SourceCaptureResult
+    selected_market: MarketMetadataCandidate
+    selected_window_id: str
+    metadata_raw_rows: tuple[RawMetadataMessage, ...] = ()
+    metadata_rows: tuple[MarketMetadataCandidate, ...] = ()
+    admitted_window_ids: dict[str, str] = field(default_factory=dict)
+    refresh_attempted: bool = False
+    refresh_changed_binding: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -298,7 +332,10 @@ def run_phase1_capture(
         logger=logger,
         )
     )
-    _, admitted_window_ids, _ = _admitted_family_candidates(metadata_rows)
+    active_metadata_rows = list(metadata_rows)
+    metadata_output_raw = list(metadata_raw)
+    metadata_output_rows = list(metadata_rows)
+    _, active_admitted_window_ids, _ = _admitted_family_candidates(active_metadata_rows)
     chainlink_raw: list[dict[str, object]] = []
     chainlink_rows: list[ChainlinkTick] = []
     exchange_raw: list[dict[str, object]] = []
@@ -317,8 +354,12 @@ def run_phase1_capture(
     retry_count_by_source: Counter[str] = Counter()
     retry_exhaustion_count_by_source: Counter[str] = Counter()
     source_failure_count_by_source: Counter[str] = Counter()
+    polymarket_failure_count_by_class: Counter[str] = Counter()
     consecutive_missing_by_source: Counter[str] = Counter()
     max_consecutive_missing_by_source: Counter[str] = Counter()
+    polymarket_selector_refresh_count = 0
+    polymarket_selector_rebind_count = 0
+    polymarket_rollover_grace_sample_count = 0
     termination_reason = "completed"
 
     while True:
@@ -332,10 +373,10 @@ def run_phase1_capture(
 
         try:
             sample_market = _select_market_for_current_time(
-                metadata_rows,
+                active_metadata_rows,
                 current_ts=sample_started_at,
             )
-            selected_window_id = admitted_window_ids[sample_market.market_id]
+            selected_window_id = active_admitted_window_ids[sample_market.market_id]
             consecutive_missing_by_source["selection"] = 0
         except Exception as exc:
             family_validation_status = "selection_failed"
@@ -388,12 +429,37 @@ def run_phase1_capture(
 
         chainlink_result = _collect_chainlink_ticks(config, logger=logger)
         exchange_result = _collect_exchange_quotes(config, logger=logger)
-        polymarket_result = _collect_polymarket_quote(
+        polymarket_resolution = _resolve_polymarket_quote_capture(
             config,
+            metadata_rows=active_metadata_rows,
+            admitted_window_ids=active_admitted_window_ids,
             selected_market=sample_market,
             selected_window_id=selected_window_id,
+            current_ts=sample_started_at,
+            prior_consecutive_missing=consecutive_missing_by_source["polymarket_quotes"],
             logger=logger,
         )
+        if polymarket_resolution.metadata_raw_rows:
+            metadata_output_raw.extend(polymarket_resolution.metadata_raw_rows)
+        if polymarket_resolution.metadata_rows:
+            metadata_output_rows.extend(polymarket_resolution.metadata_rows)
+            active_metadata_rows = list(polymarket_resolution.metadata_rows)
+            active_admitted_window_ids = dict(polymarket_resolution.admitted_window_ids)
+        if polymarket_resolution.refresh_attempted:
+            polymarket_selector_refresh_count += 1
+        if polymarket_resolution.refresh_changed_binding:
+            polymarket_selector_rebind_count += 1
+            sample_market = polymarket_resolution.selected_market
+            selected_window_id = polymarket_resolution.selected_window_id
+            logger.info(
+                "refreshed Polymarket binding to %s slug=%s window_id=%s",
+                sample_market.market_id,
+                sample_market.market_slug or "unknown",
+                selected_window_id,
+            )
+        polymarket_result = polymarket_resolution.result
+        if polymarket_result.details.get("within_rollover_grace_window"):
+            polymarket_rollover_grace_sample_count += 1
         source_results = {
             chainlink_result.source_name: chainlink_result,
             exchange_result.source_name: exchange_result,
@@ -404,6 +470,8 @@ def run_phase1_capture(
             retry_count_by_source[source_name] += result.retries
             if result.status != "success":
                 source_failure_count_by_source[source_name] += 1
+                if source_name == "polymarket_quotes" and result.failure_class is not None:
+                    polymarket_failure_count_by_class[result.failure_class] += 1
                 if result.status == "retry_exhausted":
                     retry_exhaustion_count_by_source[source_name] += 1
             missing_output = len(result.normalized_rows) == 0
@@ -431,8 +499,14 @@ def run_phase1_capture(
             for source_name, result in source_results.items()
             if result.status != "success"
         )
+        terminal_source_failure = any(
+            result.failure_class in {"terminal_invalid_market", "terminal_schema_failure"}
+            for result in source_results.values()
+        )
         if degraded_sources:
-            if all(len(result.normalized_rows) == 0 for result in source_results.values()):
+            if terminal_source_failure or all(
+                len(result.normalized_rows) == 0 for result in source_results.values()
+            ):
                 sample_status = "failed"
                 failed_sample_count += 1
             else:
@@ -453,9 +527,18 @@ def run_phase1_capture(
             >= config.max_consecutive_exchange_failures
         ):
             termination_reason = "exchange_failure_threshold_exceeded"
+        elif polymarket_result.failure_class == "terminal_invalid_market":
+            termination_reason = "polymarket_market_invalid"
+        elif polymarket_result.failure_class == "terminal_schema_failure":
+            termination_reason = "polymarket_schema_failure"
         elif (
             consecutive_missing_by_source["polymarket_quotes"]
-            >= config.max_consecutive_polymarket_failures
+            >= _polymarket_failure_threshold(
+                config,
+                within_rollover_grace_window=bool(
+                    polymarket_result.details.get("within_rollover_grace_window")
+                ),
+            )
         ):
             termination_reason = "polymarket_failure_threshold_exceeded"
 
@@ -495,8 +578,8 @@ def run_phase1_capture(
             raw_dataset="polymarket_metadata",
             normalized_dataset="market_metadata_events",
             capture_date=capture_date,
-            raw_rows=metadata_raw,
-            normalized_rows=metadata_rows,
+            raw_rows=metadata_output_raw,
+            normalized_rows=metadata_output_rows,
         ),
         _write_dataset(
             config,
@@ -544,6 +627,10 @@ def run_phase1_capture(
         retry_exhaustion_count_by_source=dict(retry_exhaustion_count_by_source),
         source_failure_count_by_source=dict(source_failure_count_by_source),
         max_consecutive_missing_by_source=dict(max_consecutive_missing_by_source),
+        polymarket_failure_count_by_class=dict(polymarket_failure_count_by_class),
+        polymarket_selector_refresh_count=polymarket_selector_refresh_count,
+        polymarket_selector_rebind_count=polymarket_selector_rebind_count,
+        polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
         termination_reason=termination_reason,
         sample_diagnostics_path=sample_diagnostics_path,
     )
@@ -1038,9 +1125,24 @@ def _collect_polymarket_quote(
     *,
     selected_market: MarketMetadataCandidate,
     selected_window_id: str,
+    current_ts: datetime | None = None,
     logger: logging.Logger,
 ) -> SourceCaptureResult:
     recv_ts = datetime.now(UTC)
+    effective_current_ts = current_ts or recv_ts
+    rollover_context = _polymarket_rollover_context(
+        selected_market,
+        current_ts=effective_current_ts,
+        grace_seconds=config.polymarket_rollover_grace_seconds,
+    )
+    base_details = {
+        "selected_market_id": selected_market.market_id,
+        "selected_market_slug": selected_market.market_slug,
+        "selected_window_id": selected_window_id,
+        "metadata_refresh_attempted": False,
+        "metadata_refresh_changed_binding": False,
+        **rollover_context,
+    }
     if selected_market.token_yes_id is None or selected_market.token_no_id is None:
         return SourceCaptureResult(
             source_name="polymarket_quotes",
@@ -1054,13 +1156,14 @@ def _collect_polymarket_quote(
                     failure_type="MissingTokenIds",
                     failure_message="selected Polymarket market is missing CLOB token ids",
                     market_id=selected_market.market_id,
-                    details={"selected_window_id": selected_window_id},
+                    details=base_details,
                 ),
             ),
             normalized_rows=(),
+            failure_class="terminal_invalid_market",
             failure_type="MissingTokenIds",
             failure_message="selected Polymarket market is missing CLOB token ids",
-            details={"selected_window_id": selected_window_id},
+            details=base_details,
         )
 
     yes_url = config.polymarket_book_url_template.format(token_id=selected_market.token_yes_id)
@@ -1093,35 +1196,67 @@ def _collect_polymarket_quote(
         None,
     )
     if failed_fetch is not None:
+        failure_status, failure_class = _classify_polymarket_fetch_result(
+            failed_fetch,
+            within_rollover_grace_window=bool(
+                rollover_context["within_rollover_grace_window"]
+            ),
+        )
         return SourceCaptureResult(
             source_name="polymarket_quotes",
-            status=failed_fetch.status,
+            status=failure_status,
             raw_rows=(
                 _failure_raw_row(
                     source_name="polymarket_quotes",
                     request_url=",".join((yes_url, no_url)),
                     recv_ts=recv_ts,
-                    status=failed_fetch.status,
+                    status=failure_status,
                     failure_type=failed_fetch.failure_type,
                     failure_message=failed_fetch.failure_message,
                     market_id=selected_market.market_id,
-                    details={"selected_window_id": selected_window_id},
+                    details=base_details,
                 ),
             ),
             normalized_rows=(),
             retries=total_retries,
+            failure_class=failure_class,
             failure_type=failed_fetch.failure_type,
             failure_message=failed_fetch.failure_message,
-            details={"selected_window_id": selected_window_id},
+            http_status=failed_fetch.http_status,
+            details=base_details,
         )
 
-    payload, empty_sides = _build_polymarket_quote_payload(
-        market_id=selected_market.market_id,
-        yes_token_id=selected_market.token_yes_id,
-        no_token_id=selected_market.token_no_id,
-        yes_book=yes_book_result.payload,
-        no_book=no_book_result.payload,
-    )
+    try:
+        payload, empty_sides = _build_polymarket_quote_payload(
+            market_id=selected_market.market_id,
+            yes_token_id=selected_market.token_yes_id,
+            no_token_id=selected_market.token_no_id,
+            yes_book=yes_book_result.payload,
+            no_book=no_book_result.payload,
+        )
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status="terminal_failure",
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="polymarket_quotes",
+                    request_url=",".join((yes_url, no_url)),
+                    recv_ts=recv_ts,
+                    status="terminal_failure",
+                    failure_type=type(exc).__name__,
+                    failure_message=str(exc),
+                    market_id=selected_market.market_id,
+                    details=base_details,
+                ),
+            ),
+            normalized_rows=(),
+            retries=total_retries,
+            failure_class="terminal_schema_failure",
+            failure_type=type(exc).__name__,
+            failure_message=str(exc),
+            details=base_details,
+        )
     raw_payload = {
         "yes_book": yes_book_result.payload,
         "no_book": no_book_result.payload,
@@ -1153,17 +1288,44 @@ def _collect_polymarket_quote(
                     "capture_status": "degraded_empty_book",
                     "empty_sides": list(empty_sides),
                     "selected_window_id": selected_window_id,
+                    "selected_market_slug": selected_market.market_slug,
+                    **rollover_context,
                     "raw_payload": raw_payload,
                 },
             ),
             normalized_rows=(),
             retries=total_retries,
+            failure_class="degraded_empty_book",
             details={
                 "empty_sides": list(empty_sides),
-                "selected_window_id": selected_window_id,
+                **base_details,
             },
         )
-    quote = normalize_polymarket_quote(payload, recv_ts=recv_ts)
+    try:
+        quote = normalize_polymarket_quote(payload, recv_ts=recv_ts)
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status="terminal_failure",
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="polymarket_quotes",
+                    request_url=",".join((yes_url, no_url)),
+                    recv_ts=recv_ts,
+                    status="terminal_failure",
+                    failure_type=type(exc).__name__,
+                    failure_message=str(exc),
+                    market_id=selected_market.market_id,
+                    details=base_details,
+                ),
+            ),
+            normalized_rows=(),
+            retries=total_retries,
+            failure_class="terminal_schema_failure",
+            failure_type=type(exc).__name__,
+            failure_message=str(exc),
+            details=base_details,
+        )
     raw_row = {
         "raw_event_id": quote.raw_event_id,
         "venue_id": VenueCode.POLYMARKET.value,
@@ -1175,6 +1337,8 @@ def _collect_polymarket_quote(
         "token_yes_id": selected_market.token_yes_id,
         "token_no_id": selected_market.token_no_id,
         "selected_window_id": selected_window_id,
+        "selected_market_slug": selected_market.market_slug,
+        **rollover_context,
         "capture_status": "success",
         "raw_payload": raw_payload,
     }
@@ -1185,8 +1349,208 @@ def _collect_polymarket_quote(
         raw_rows=(raw_row,),
         normalized_rows=(quote,),
         retries=total_retries,
-        details={"selected_window_id": selected_window_id},
+        details=base_details,
     )
+
+
+def _resolve_polymarket_quote_capture(
+    config: Phase1CaptureConfig,
+    *,
+    metadata_rows: list[MarketMetadataCandidate],
+    admitted_window_ids: dict[str, str],
+    selected_market: MarketMetadataCandidate,
+    selected_window_id: str,
+    current_ts: datetime,
+    prior_consecutive_missing: int,
+    logger: logging.Logger,
+) -> PolymarketQuoteResolution:
+    result = _collect_polymarket_quote(
+        config,
+        selected_market=selected_market,
+        selected_window_id=selected_window_id,
+        current_ts=current_ts,
+        logger=logger,
+    )
+    if not _should_refresh_polymarket_binding(
+        result,
+        prior_consecutive_missing=prior_consecutive_missing,
+    ):
+        return PolymarketQuoteResolution(
+            result=result,
+            selected_market=selected_market,
+            selected_window_id=selected_window_id,
+        )
+
+    refresh_context = {
+        "metadata_refresh_attempted": True,
+        "metadata_refresh_reason": result.failure_class or result.status,
+    }
+    try:
+        refreshed_metadata_raw, refreshed_metadata_rows, _, _ = _collect_polymarket_metadata(
+            config,
+            logger=logger,
+        )
+        _, refreshed_admitted_window_ids, _ = _admitted_family_candidates(refreshed_metadata_rows)
+        refreshed_market = _select_market_for_current_time(
+            refreshed_metadata_rows,
+            current_ts=current_ts,
+        )
+        refreshed_window_id = refreshed_admitted_window_ids[refreshed_market.market_id]
+    except Exception as exc:
+        logger.warning("Polymarket metadata refresh failed: %s", exc)
+        return PolymarketQuoteResolution(
+            result=_with_capture_details(
+                result,
+                **refresh_context,
+                metadata_refresh_failure_type=type(exc).__name__,
+                metadata_refresh_failure_message=str(exc),
+            ),
+            selected_market=selected_market,
+            selected_window_id=selected_window_id,
+        )
+
+    binding_changed = (
+        refreshed_market.market_id != selected_market.market_id
+        or refreshed_window_id != selected_window_id
+    )
+    retry_result = _collect_polymarket_quote(
+        config,
+        selected_market=refreshed_market,
+        selected_window_id=refreshed_window_id,
+        current_ts=current_ts,
+        logger=logger,
+    )
+    retry_result = _finalize_refreshed_polymarket_result(
+        retry_result,
+        binding_changed=binding_changed,
+    )
+    retry_result = _with_capture_details(
+        retry_result,
+        **refresh_context,
+        metadata_refresh_changed_binding=binding_changed,
+        refreshed_market_id=refreshed_market.market_id,
+        refreshed_market_slug=refreshed_market.market_slug,
+        refreshed_window_id=refreshed_window_id,
+    )
+    return PolymarketQuoteResolution(
+        result=retry_result,
+        selected_market=refreshed_market,
+        selected_window_id=refreshed_window_id,
+        metadata_raw_rows=tuple(refreshed_metadata_raw),
+        metadata_rows=tuple(refreshed_metadata_rows),
+        admitted_window_ids=refreshed_admitted_window_ids,
+        refresh_attempted=True,
+        refresh_changed_binding=binding_changed,
+    )
+
+
+def _should_refresh_polymarket_binding(
+    result: SourceCaptureResult,
+    *,
+    prior_consecutive_missing: int,
+) -> bool:
+    if result.status == "success":
+        return False
+    if result.failure_class in {"selector_refresh_required", "market_binding_stale"}:
+        return True
+    if (
+        result.status == "degraded_empty_book"
+        and result.details.get("within_rollover_grace_window")
+    ):
+        return True
+    return prior_consecutive_missing >= 1
+
+
+def _finalize_refreshed_polymarket_result(
+    result: SourceCaptureResult,
+    *,
+    binding_changed: bool,
+) -> SourceCaptureResult:
+    within_rollover_grace_window = bool(result.details.get("within_rollover_grace_window"))
+    if result.failure_class == "selector_refresh_required":
+        if within_rollover_grace_window:
+            return replace(
+                result,
+                status="degraded_retryable_http_404",
+                failure_class="retryable_http_404",
+            )
+        return replace(
+            result,
+            status="terminal_failure",
+            failure_class="terminal_invalid_market",
+        )
+    if result.failure_class == "market_binding_stale" and not binding_changed:
+        return replace(
+            result,
+            status="terminal_failure",
+            failure_class="terminal_invalid_market",
+        )
+    return result
+
+
+def _with_capture_details(
+    result: SourceCaptureResult,
+    **extra_details: object,
+) -> SourceCaptureResult:
+    merged_details = dict(result.details)
+    merged_details.update(extra_details)
+    return replace(result, details=merged_details)
+
+
+def _classify_polymarket_fetch_result(
+    fetch_result: FetchResult,
+    *,
+    within_rollover_grace_window: bool,
+) -> tuple[str, str]:
+    if fetch_result.http_status == 404:
+        if within_rollover_grace_window:
+            return "selector_refresh_required", "selector_refresh_required"
+        return "terminal_failure", "market_binding_stale"
+    if fetch_result.http_status in RETRYABLE_HTTP_STATUS_CODES:
+        return fetch_result.status, "retryable_http_5xx"
+    if fetch_result.status == "retry_exhausted":
+        return fetch_result.status, "retryable_http_5xx"
+    return fetch_result.status, "terminal_invalid_market"
+
+
+def _polymarket_rollover_context(
+    selected_market: MarketMetadataCandidate,
+    *,
+    current_ts: datetime,
+    grace_seconds: float,
+) -> dict[str, object]:
+    seconds_since_open: float | None = None
+    seconds_remaining: float | None = None
+    if selected_market.market_open_ts is not None:
+        seconds_since_open = max(
+            0.0,
+            (current_ts - selected_market.market_open_ts).total_seconds(),
+        )
+    if selected_market.market_close_ts is not None:
+        seconds_remaining = max(
+            0.0,
+            (selected_market.market_close_ts - current_ts).total_seconds(),
+        )
+    within_rollover_grace_window = False
+    if seconds_since_open is not None and seconds_since_open <= grace_seconds:
+        within_rollover_grace_window = True
+    if seconds_remaining is not None and seconds_remaining <= grace_seconds:
+        within_rollover_grace_window = True
+    return {
+        "seconds_since_open": seconds_since_open,
+        "seconds_remaining": seconds_remaining,
+        "within_rollover_grace_window": within_rollover_grace_window,
+    }
+
+
+def _polymarket_failure_threshold(
+    config: Phase1CaptureConfig,
+    *,
+    within_rollover_grace_window: bool,
+) -> int:
+    if within_rollover_grace_window:
+        return config.max_consecutive_polymarket_failures_in_grace
+    return config.max_consecutive_polymarket_failures
 
 
 def _write_dataset(
@@ -1638,16 +2002,19 @@ __all__ = [
     "DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES",
     "DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES",
     "DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES",
+    "DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE",
     "DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES",
     "DEFAULT_MAX_FETCH_RETRIES",
     "DEFAULT_METADATA_LIMIT",
     "DEFAULT_METADATA_PAGES",
+    "DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS",
     "DEFAULT_POLL_INTERVAL_SECONDS",
     "DEFAULT_TIMEOUT_SECONDS",
     "FetchResult",
     "MetadataSelectionDiagnostics",
     "Phase1CaptureConfig",
     "Phase1CaptureResult",
+    "PolymarketQuoteResolution",
     "SampleDiagnostics",
     "SessionDiagnostics",
     "SourceCaptureResult",
