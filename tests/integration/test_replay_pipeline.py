@@ -110,7 +110,7 @@ def _write_metadata_candidates(data_root: Path) -> None:
     write_jsonl_rows(
         data_root
         / "normalized"
-        / "polymarket_metadata"
+        / "market_metadata_events"
         / "date=2026-03-13"
         / "part-00000.jsonl",
         [{key: serialize_value(value) for key, value in asdict(candidate).items()}],

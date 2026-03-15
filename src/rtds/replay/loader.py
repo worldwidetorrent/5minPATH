@@ -61,13 +61,17 @@ def load_metadata_candidates(
 ) -> list[MarketMetadataCandidate]:
     """Load normalized Polymarket metadata candidates for one UTC date."""
 
-    root = (
-        Path(data_root)
-        / "normalized"
-        / "polymarket_metadata"
-        / f"date={_normalize_date(date_utc)}"
+    normalized_root = Path(data_root) / "normalized"
+    partition = f"date={_normalize_date(date_utc)}"
+    candidate_roots = (
+        normalized_root / "market_metadata_events" / partition,
+        normalized_root / "polymarket_metadata" / partition,
     )
-    return [_row_to_metadata_candidate(row) for row in _read_jsonl_dir(root)]
+    for root in candidate_roots:
+        rows = _read_jsonl_dir(root)
+        if rows:
+            return [_row_to_metadata_candidate(row) for row in rows]
+    return []
 
 
 def load_snapshots(snapshot_root: str | Path) -> list[SnapshotRecord]:
