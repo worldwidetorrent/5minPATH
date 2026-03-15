@@ -48,8 +48,9 @@ The original architecture still matters and remains the north star. The current 
 
 - It uses a bounded orchestration session instead of long-running collectors. Reason: the immediate success metric is to prove the repo can land coherent real files in a controlled smoke-test window before expanding to full-day operations.
 - It uses public REST and RPC snapshots for Binance.US, Coinbase, Kraken, Chainlink, and Polymarket instead of websocket-first or RTDS-first streams. Reason: these public endpoints are sufficient to materialize real files now and keep the schema/replay spine moving.
-- Polymarket metadata discovery currently pulls from the active event feed rather than the broader market search surface. Reason: the event feed exposed a materially better BTC candidate strip for smoke-session validation, while still preserving raw payload capture and normalized candidate rows.
-- It selects one live BTC Polymarket market from current metadata rather than yet proving the exact 5-minute target market family end to end. Reason: phase 1 is about producing real persisted source truth under the frozen layout before tightening market-admission policy.
+- Polymarket metadata discovery currently pulls from the `up-or-down` event feed rather than the broader market search surface. Reason: that feed exposes the recurring BTC 5-minute family densely enough to admit the exact target strip without scanning thousands of unrelated events first.
+- The live selector now admits only exact BTC 5-minute family candidates and binds them to canonical `window_id`s before quote capture. Reason: the repo’s canonical grammar treats `window_id` as primary and market binding as a downstream step, so live capture now follows that same contract.
+- During bounded sessions, quote capture can roll between admitted family members as the live 5-minute window advances. Reason: the target family is recurring, so a 10-minute smoke run must stay on the same family while moving from one canonical window to the next.
 
 Those are implementation shortcuts, not architectural reversals. The intended endpoint is still a source-faithful, continuously operating collection layer that preserves the oracle-anchored replay contract.
 

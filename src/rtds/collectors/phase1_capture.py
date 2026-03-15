@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -28,6 +29,8 @@ from rtds.collectors.polymarket.metadata import (
 from rtds.core.enums import VenueCode
 from rtds.core.time import format_utc
 from rtds.mapping.anchor_assignment import DEFAULT_ORACLE_FEED_ID, ChainlinkTick
+from rtds.mapping.market_mapper import map_candidates_to_windows
+from rtds.mapping.window_ids import daily_window_schedule
 from rtds.normalizers.exchange import (
     normalize_binance_quote,
     normalize_coinbase_quote,
@@ -89,13 +92,38 @@ class CollectorArtifactSet:
 
 
 @dataclass(slots=True, frozen=True)
+class MetadataSelectionDiagnostics:
+    """Exact-family selector diagnostics for one capture session."""
+
+    selected_market_id: str
+    selected_market_slug: str | None
+    selected_window_id: str
+    candidate_count: int
+    admitted_count: int
+    rejected_count_by_reason: dict[str, int]
+
+    def to_summary_dict(self) -> dict[str, object]:
+        return {
+            "selected_market_id": self.selected_market_id,
+            "selected_market_slug": self.selected_market_slug,
+            "selected_window_id": self.selected_window_id,
+            "candidate_count": self.candidate_count,
+            "admitted_count": self.admitted_count,
+            "rejected_count_by_reason": dict(sorted(self.rejected_count_by_reason.items())),
+        }
+
+
+@dataclass(slots=True, frozen=True)
 class Phase1CaptureResult:
     """Persisted output summary for one capture session."""
 
     session_id: str
     capture_date: date
     selected_market_id: str
+    selected_market_slug: str | None
     selected_market_question: str | None
+    selected_window_id: str
+    selector_diagnostics: MetadataSelectionDiagnostics
     duration_seconds: float
     poll_interval_seconds: float
     sample_count: int
@@ -107,7 +135,10 @@ class Phase1CaptureResult:
             "session_id": self.session_id,
             "capture_date": self.capture_date.isoformat(),
             "selected_market_id": self.selected_market_id,
+            "selected_market_slug": self.selected_market_slug,
             "selected_market_question": self.selected_market_question,
+            "selected_window_id": self.selected_window_id,
+            "selector_diagnostics": self.selector_diagnostics.to_summary_dict(),
             "duration_seconds": self.duration_seconds,
             "poll_interval_seconds": self.poll_interval_seconds,
             "sample_count": self.sample_count,
@@ -134,9 +165,11 @@ def run_phase1_capture(
     capture_started_at = config.capture_started_at or datetime.now(UTC)
     capture_date = capture_started_at.date()
 
-    metadata_raw, metadata_rows, selected_market = _collect_polymarket_metadata(
+    metadata_raw, metadata_rows, selected_market, selector_diagnostics = (
+        _collect_polymarket_metadata(
         config,
         logger=logger,
+        )
     )
     chainlink_raw: list[dict[str, object]] = []
     chainlink_rows: list[ChainlinkTick] = []
@@ -153,6 +186,13 @@ def run_phase1_capture(
     while True:
         sample_count += 1
         logger.info("starting capture sample %s", sample_count)
+        sample_market = _select_market_for_current_time(metadata_rows, current_ts=datetime.now(UTC))
+        if sample_market.market_id != selected_market.market_id:
+            logger.info(
+                "rolling Polymarket sample market to %s slug=%s",
+                sample_market.market_id,
+                sample_market.market_slug or "unknown",
+            )
         session_chainlink_raw, session_chainlink_rows = _collect_chainlink_ticks(
             config,
             logger=logger,
@@ -163,7 +203,7 @@ def run_phase1_capture(
         )
         session_polymarket_raw, session_polymarket_rows = _collect_polymarket_quote(
             config,
-            selected_market=selected_market,
+            selected_market=sample_market,
             logger=logger,
         )
         chainlink_raw.extend(session_chainlink_raw)
@@ -234,7 +274,10 @@ def run_phase1_capture(
         session_id=config.session_id,
         capture_date=capture_date,
         selected_market_id=selected_market.market_id,
+        selected_market_slug=selected_market.market_slug,
         selected_market_question=selected_market.market_question,
+        selected_window_id=selector_diagnostics.selected_window_id,
+        selector_diagnostics=selector_diagnostics,
         duration_seconds=duration_seconds,
         poll_interval_seconds=poll_interval_seconds,
         sample_count=sample_count,
@@ -260,7 +303,12 @@ def _collect_polymarket_metadata(
     config: Phase1CaptureConfig,
     *,
     logger: logging.Logger,
-) -> tuple[list[RawMetadataMessage], list[MarketMetadataCandidate], MarketMetadataCandidate]:
+) -> tuple[
+    list[RawMetadataMessage],
+    list[MarketMetadataCandidate],
+    MarketMetadataCandidate,
+    MetadataSelectionDiagnostics,
+]:
     raw_messages, normalized_candidates = _fetch_polymarket_market_pages(config)
     btc_candidates = [
         candidate
@@ -272,30 +320,134 @@ def _collect_polymarket_metadata(
     if not btc_candidates:
         raise RuntimeError("no BTC Polymarket markets were discovered")
 
-    preferred = [
-        candidate
-        for candidate in btc_candidates
-        if candidate.active_flag is not False
-        and candidate.token_yes_id is not None
-        and candidate.token_no_id is not None
-        and "chainlink" in (candidate.resolution_source_text or "").lower()
-    ]
-    fallback = [
-        candidate
-        for candidate in btc_candidates
-        if candidate.active_flag is not False
-        and candidate.token_yes_id is not None
-        and candidate.token_no_id is not None
-    ]
-    if not fallback:
-        raise RuntimeError("no active BTC Polymarket markets with token ids were discovered")
-    selected_market = preferred[0] if preferred else fallback[0]
-    logger.info(
-        "selected Polymarket market %s (%s)",
-        selected_market.market_id,
-        selected_market.market_question or selected_market.market_title or "unknown",
+    selected_market, admitted_candidates, selector_diagnostics = _select_target_family_candidates(
+        btc_candidates,
     )
-    return raw_messages, btc_candidates, selected_market
+    logger.info(
+        "selected Polymarket market %s slug=%s window_id=%s admitted=%s/%s",
+        selected_market.market_id,
+        selected_market.market_slug or "unknown",
+        selector_diagnostics.selected_window_id,
+        selector_diagnostics.admitted_count,
+        selector_diagnostics.candidate_count,
+    )
+    return raw_messages, admitted_candidates, selected_market, selector_diagnostics
+
+
+def _select_target_family_candidates(
+    candidates: list[MarketMetadataCandidate],
+) -> tuple[MarketMetadataCandidate, list[MarketMetadataCandidate], MetadataSelectionDiagnostics]:
+    now_ts = datetime.now(UTC)
+    admitted_candidates, admitted_candidates_by_market_id, rejected_count_by_reason = (
+        _admitted_family_candidates(candidates)
+    )
+    if not admitted_candidates:
+        reason_summary = ", ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(rejected_count_by_reason.items())
+        )
+        raise RuntimeError(
+            "no exact BTC 5-minute Up/Down markets were admitted"
+            + (f" ({reason_summary})" if reason_summary else "")
+        )
+
+    selected_market = _select_market_for_current_time(admitted_candidates, current_ts=now_ts)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=selected_market.market_id,
+        selected_market_slug=selected_market.market_slug,
+        selected_window_id=admitted_candidates_by_market_id[selected_market.market_id],
+        candidate_count=len(candidates),
+        admitted_count=len(admitted_candidates),
+        rejected_count_by_reason=dict(rejected_count_by_reason),
+    )
+    return selected_market, admitted_candidates, selector_diagnostics
+
+
+def _admitted_family_candidates(
+    candidates: list[MarketMetadataCandidate],
+) -> tuple[list[MarketMetadataCandidate], dict[str, str], Counter[str]]:
+    windows = [
+        window
+        for day in _candidate_schedule_days(candidates)
+        for window in daily_window_schedule(day)
+    ]
+    mapping_batch = map_candidates_to_windows(windows, candidates)
+    rejected_count_by_reason = Counter(
+        assessment.reason
+        for assessment in mapping_batch.assessments
+        if not assessment.accepted
+    )
+    accepted_by_window_id: dict[str, list[str]] = {}
+    for assessment in mapping_batch.assessments:
+        if assessment.accepted and assessment.window_id is not None:
+            accepted_by_window_id.setdefault(assessment.window_id, []).append(assessment.market_id)
+    for market_ids in accepted_by_window_id.values():
+        if len(market_ids) > 1:
+            rejected_count_by_reason["window_ambiguous"] += len(market_ids)
+
+    admitted_candidates_by_market_id = {
+        record.polymarket_market_id: record.window_id
+        for record in mapping_batch.records
+        if record.mapping_status == "mapped" and record.polymarket_market_id is not None
+    }
+    admitted_candidates = sorted(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.market_id in admitted_candidates_by_market_id
+        ),
+        key=lambda candidate: (
+            admitted_candidates_by_market_id[candidate.market_id],
+            candidate.market_slug or "",
+            candidate.market_id,
+        ),
+    )
+    return admitted_candidates, admitted_candidates_by_market_id, rejected_count_by_reason
+
+
+def _candidate_schedule_days(candidates: list[MarketMetadataCandidate]) -> list[date]:
+    days = {
+        candidate.market_open_ts.date()
+        for candidate in candidates
+        if candidate.market_open_ts is not None
+    } | {
+        candidate.market_close_ts.date()
+        for candidate in candidates
+        if candidate.market_close_ts is not None
+    }
+    return sorted(days)
+
+
+def _select_market_for_current_time(
+    admitted_candidates: list[MarketMetadataCandidate],
+    *,
+    current_ts: datetime,
+) -> MarketMetadataCandidate:
+    windows = [
+        window
+        for day in _candidate_schedule_days(admitted_candidates)
+        for window in daily_window_schedule(day)
+    ]
+    window_by_id = {window.window_id: window for window in windows}
+    _, admitted_candidates_by_market_id, _ = _admitted_family_candidates(admitted_candidates)
+
+    def _selection_priority(candidate: MarketMetadataCandidate) -> tuple[int, float, str]:
+        window = window_by_id[admitted_candidates_by_market_id[candidate.market_id]]
+        if window.window_start_ts <= current_ts < window.window_end_ts:
+            return (0, 0.0, window.window_id)
+        if window.window_start_ts > current_ts:
+            return (
+                1,
+                (window.window_start_ts - current_ts).total_seconds(),
+                window.window_id,
+            )
+        return (
+            2,
+            (current_ts - window.window_end_ts).total_seconds(),
+            window.window_id,
+        )
+
+    return min(admitted_candidates, key=_selection_priority)
 
 
 def _fetch_polymarket_market_pages(
@@ -307,7 +459,7 @@ def _fetch_polymarket_market_pages(
 
     for _ in range(config.metadata_pages):
         params = {
-            "active": "true",
+            "tag_slug": "up-or-down",
             "closed": "false",
             "limit": config.metadata_limit,
             "offset": offset,
@@ -814,6 +966,7 @@ __all__ = [
     "DEFAULT_METADATA_PAGES",
     "DEFAULT_POLL_INTERVAL_SECONDS",
     "DEFAULT_TIMEOUT_SECONDS",
+    "MetadataSelectionDiagnostics",
     "Phase1CaptureConfig",
     "Phase1CaptureResult",
     "run_phase1_capture",

@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from rtds.collectors.phase1_capture import (
+    MetadataSelectionDiagnostics,
     Phase1CaptureConfig,
     _build_polymarket_quote_payload,
     _collect_polymarket_metadata,
@@ -70,14 +71,16 @@ def test_build_polymarket_quote_payload_uses_best_bid_and_best_ask() -> None:
     assert payload["outcomes"]["down"]["ask"] == {"price": "0.53", "size": "7"}
 
 
-def test_collect_polymarket_metadata_keeps_prelisted_btc_candidates(monkeypatch) -> None:
+def test_collect_polymarket_metadata_keeps_only_admitted_target_family(monkeypatch) -> None:
     active_candidate = _metadata_candidate()
-    prelisted_candidate = replace(
+    non_family_candidate = replace(
         active_candidate,
         market_id="0x" + "2" * 64,
-        market_slug="btc-prelisted",
-        active_flag=False,
-        market_status="inactive",
+        market_slug="will-bitcoin-hit-150k-by-december-31-2026",
+        market_question="Will Bitcoin hit $150k by December 31, 2026?",
+        market_title="When will Bitcoin hit $150k?",
+        market_open_ts=datetime(2025, 8, 7, 16, 29, 32, tzinfo=UTC),
+        market_close_ts=datetime(2027, 1, 1, 4, 0, 0, tzinfo=UTC),
     )
     non_btc_candidate = replace(
         active_candidate,
@@ -90,11 +93,11 @@ def test_collect_polymarket_metadata_keeps_prelisted_btc_candidates(monkeypatch)
         "rtds.collectors.phase1_capture._fetch_polymarket_market_pages",
         lambda config: (
             [_metadata_raw(active_candidate.market_id)],
-            [active_candidate, prelisted_candidate, non_btc_candidate],
+            [active_candidate, non_family_candidate, non_btc_candidate],
         ),
     )
 
-    _, metadata_rows, selected_market = _collect_polymarket_metadata(
+    _, metadata_rows, selected_market, selector_diagnostics = _collect_polymarket_metadata(
         Phase1CaptureConfig(
             data_root=Path("data"),
             artifacts_root=Path("artifacts"),
@@ -105,11 +108,12 @@ def test_collect_polymarket_metadata_keeps_prelisted_btc_candidates(monkeypatch)
         logger=_logger(),
     )
 
-    assert [row.market_id for row in metadata_rows] == [
-        active_candidate.market_id,
-        prelisted_candidate.market_id,
-    ]
+    assert [row.market_id for row in metadata_rows] == [active_candidate.market_id]
     assert selected_market.market_id == active_candidate.market_id
+    assert selector_diagnostics.candidate_count == 2
+    assert selector_diagnostics.admitted_count == 1
+    assert selector_diagnostics.selected_window_id == "btc-5m-20260313T120500Z"
+    assert selector_diagnostics.rejected_count_by_reason["structure_mismatch"] == 1
 
 
 def test_run_phase1_capture_repeats_samples_for_bounded_session(
@@ -117,21 +121,23 @@ def test_run_phase1_capture_repeats_samples_for_bounded_session(
     monkeypatch,
 ) -> None:
     active_candidate = _metadata_candidate()
-    prelisted_candidate = replace(
-        active_candidate,
-        market_id="0x" + "4" * 64,
-        market_slug="btc-prelisted",
-        active_flag=False,
-        market_status="inactive",
-    )
     metadata_raw = _metadata_raw(active_candidate.market_id)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=active_candidate.market_id,
+        selected_market_slug=active_candidate.market_slug,
+        selected_window_id="btc-5m-20260313T120500Z",
+        candidate_count=3,
+        admitted_count=1,
+        rejected_count_by_reason={"structure_mismatch": 2},
+    )
 
     monkeypatch.setattr(
         "rtds.collectors.phase1_capture._collect_polymarket_metadata",
         lambda config, logger: (
             [metadata_raw],
-            [active_candidate, prelisted_candidate],
+            [active_candidate],
             active_candidate,
+            selector_diagnostics,
         ),
     )
 
@@ -215,10 +221,13 @@ def test_run_phase1_capture_repeats_samples_for_bounded_session(
 
     assert result.sample_count == 3
     assert sleep_calls == [60.0, 59.0]
-    assert result.collectors[0].normalized_row_count == 2
+    assert result.collectors[0].normalized_row_count == 1
     assert result.collectors[1].normalized_row_count == 3
     assert result.collectors[2].normalized_row_count == 9
     assert result.collectors[3].normalized_row_count == 3
+    assert result.selected_market_slug == active_candidate.market_slug
+    assert result.selected_window_id == "btc-5m-20260313T120500Z"
+    assert result.selector_diagnostics.admitted_count == 1
     assert result.summary_path.exists()
 
 

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from rtds.collectors.polymarket.metadata import (
     NORMALIZER_VERSION as METADATA_NORMALIZER_VERSION,
 )
-from rtds.collectors.polymarket.metadata import MarketMetadataCandidate
+from rtds.collectors.polymarket.metadata import (
+    MarketMetadataCandidate,
+)
 from rtds.core.enums import AssetCode, ConfidenceLevel
+from rtds.core.ids import build_window_id
 from rtds.core.time import ensure_utc, utc_now, window_end
 from rtds.mapping.window_ids import WindowBounds
 
@@ -21,6 +24,7 @@ UPDOWN_PATTERNS = (
     re.compile(r"\bhigher\s+or\s+lower\b", re.IGNORECASE),
     re.compile(r"\babove\s+or\s+below\b", re.IGNORECASE),
 )
+RECURRING_5M_SLUG_PATTERN = re.compile(r"^btc-updown-5m-(?P<window_start_epoch>\d{10})$")
 
 
 @dataclass(slots=True, frozen=True)
@@ -95,25 +99,37 @@ def _has_valid_token_ids(candidate: MarketMetadataCandidate) -> bool:
     return candidate.token_yes_id != candidate.token_no_id
 
 
+def _candidate_window_start(candidate: MarketMetadataCandidate) -> datetime | None:
+    slug = (candidate.market_slug or "").strip().lower()
+    match = RECURRING_5M_SLUG_PATTERN.fullmatch(slug)
+    if match is not None:
+        return datetime.fromtimestamp(int(match.group("window_start_epoch")), tz=UTC)
+    if candidate.market_open_ts is None:
+        return None
+    return ensure_utc(candidate.market_open_ts, field_name="market_open_ts")
+
+
 def _aligned_window_id(
     candidate: MarketMetadataCandidate,
     *,
     schedule_by_window_id: dict[str, WindowBounds],
 ) -> str | None:
-    if candidate.market_open_ts is None or candidate.market_close_ts is None:
+    window_start_ts = _candidate_window_start(candidate)
+    if window_start_ts is None or candidate.market_close_ts is None:
         return None
-    start_ts = ensure_utc(candidate.market_open_ts, field_name="market_open_ts")
     end_ts = ensure_utc(candidate.market_close_ts, field_name="market_close_ts")
-    matching_window = schedule_by_window_id.get(
-        f"{AssetCode.BTC.value.lower()}-5m-{start_ts.strftime('%Y%m%dT%H%M%SZ')}"
-    )
+    try:
+        window_id = str(build_window_id(AssetCode.BTC, window_start_ts))
+    except ValueError:
+        return None
+    matching_window = schedule_by_window_id.get(window_id)
     if matching_window is None:
         return None
-    if matching_window.window_start_ts != start_ts:
+    if matching_window.window_start_ts != window_start_ts:
         return None
     if matching_window.window_end_ts != end_ts:
         return None
-    if window_end(start_ts) != end_ts:
+    if window_end(window_start_ts) != end_ts:
         return None
     return matching_window.window_id
 
@@ -149,7 +165,8 @@ def assess_candidate(
             reason="token_ids_missing",
         )
 
-    if candidate.market_open_ts is None or candidate.market_close_ts is None:
+    candidate_window_start = _candidate_window_start(candidate)
+    if candidate_window_start is None or candidate.market_close_ts is None:
         return CandidateAssessment(
             market_id=candidate.market_id,
             window_id=None,
@@ -158,7 +175,7 @@ def assess_candidate(
         )
 
     duration_seconds = int(
-        (candidate.market_close_ts - candidate.market_open_ts).total_seconds()
+        (candidate.market_close_ts - candidate_window_start).total_seconds()
     )
     if duration_seconds != 300:
         return CandidateAssessment(

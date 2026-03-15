@@ -23,7 +23,7 @@ The original architecture still aims at source-faithful, continuously running co
 
 - it is bounded-session polling, not long-running
 - it uses public REST and RPC endpoints instead of the eventual websocket / RTDS-first stack
-- Polymarket metadata currently comes from active event pages because that surface exposes a broader live BTC candidate strip than the market listing feed did during smoke validation
+- Polymarket metadata currently comes from the `up-or-down` event feed because that surface exposes the recurring BTC 5-minute family densely enough to select the exact target strip
 - it persists the minimum real raw and normalized datasets needed to unblock replay-day admission work
 
 This deviation is deliberate. The immediate requirement is to prove the repo can produce real persisted files under the frozen layout without committing captured data or broadening the module surface prematurely.
@@ -78,11 +78,11 @@ Normalized outputs:
 
 Healthy collectors produce log lines showing:
 
-- one selected BTC Polymarket market
+- one selected BTC 5-minute target-family market with `market_id`, slug, and `window_id`
 - one or more capture samples
 - one or more Chainlink rounds captured
 - Binance, Coinbase, and Kraken quote snapshots captured on each sample
-- one or more Polymarket quotes captured for the selected market
+- one or more Polymarket quotes captured for the currently selected admitted family market
 - one summary artifact path
 
 Non-empty output means:
@@ -114,7 +114,9 @@ find artifacts/collect -name summary.json | sort | tail -n 1 | xargs cat
 For a smoke session, confirm:
 
 - `sample_count` is greater than `1`
+- `selector_diagnostics.candidate_count`, `admitted_count`, and `rejected_count_by_reason` are present in the summary artifact
+- `selector_diagnostics.selected_window_id` is a canonical `btc-5m-...` window
 - `data/raw/chainlink/...` has non-empty rows with stamped `recv_ts`
 - `data/normalized/exchange_quotes/...` contains non-empty `binance`, `coinbase`, and `kraken` rows
-- `data/normalized/market_metadata_events/...` includes sane BTC market slugs and at least one inactive/prelisted-looking candidate row
-- `data/normalized/polymarket_quotes/...` market IDs match the selected market in the summary artifact
+- `data/normalized/market_metadata_events/...` contains only admitted target-family rows, with slugs like `btc-updown-5m-<epoch>`
+- `data/normalized/polymarket_quotes/...` market IDs stay inside the admitted target-family strip even if they roll across multiple 5-minute windows during the session

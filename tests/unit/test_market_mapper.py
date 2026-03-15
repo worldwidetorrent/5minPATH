@@ -157,3 +157,34 @@ def test_market_mapper_rejects_misaligned_start_end_times() -> None:
     assessment = map_candidates_to_windows(windows, [candidate]).assessments[0]
     assert assessment.accepted is False
     assert assessment.reason == "window_misaligned"
+
+
+def test_market_mapper_accepts_live_recurring_5m_slug_window_binding() -> None:
+    windows = daily_window_schedule(date(2025, 12, 19))
+    candidate = normalize_market_payload(
+        market_payload={
+            "conditionId": "0x" + "4" * 64,
+            "question": "Bitcoin Up or Down - December 19, 11:35AM-11:40AM ET",
+            "slug": "btc-updown-5m-1766162100",
+            "startDate": "2025-12-18T16:43:11Z",
+            "endDate": "2025-12-19T16:40:00Z",
+            "active": True,
+            "closed": False,
+            "clobTokenIds": ["live-yes", "live-no"],
+            "resolutionSource": "https://data.chain.link/streams/btc-usd",
+            "description": "This market resolves Up or Down over the 5 minute interval.",
+            "category": "Crypto",
+        },
+        event_payload={
+            "id": "event-live-5m",
+            "title": "Bitcoin Up or Down - December 19, 11:35AM-11:40AM ET",
+        },
+        recv_ts=datetime(2026, 3, 15, 0, 40, 0, tzinfo=UTC),
+    )
+
+    batch = map_candidates_to_windows(windows, [candidate])
+    mapped = next(record for record in batch.records if record.polymarket_market_id is not None)
+
+    assert mapped.window_id == "btc-5m-20251219T163500Z"
+    assert mapped.polymarket_market_id == candidate.market_id
+    assert mapped.mapping_status == "mapped"

@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from rtds.collectors.phase1_capture import Phase1CaptureConfig, run_phase1_capture
+from rtds.collectors.phase1_capture import (
+    MetadataSelectionDiagnostics,
+    Phase1CaptureConfig,
+    run_phase1_capture,
+)
 from rtds.collectors.polymarket.metadata import RawMetadataMessage, normalize_market_payload
 from rtds.mapping.anchor_assignment import ChainlinkTick
 from rtds.normalizers.exchange import (
@@ -88,7 +92,19 @@ def test_phase1_capture_writes_frozen_raw_and_normalized_layouts(
 
     monkeypatch.setattr(
         "rtds.collectors.phase1_capture._collect_polymarket_metadata",
-        lambda config, logger: ([metadata_raw], [market_candidate], market_candidate),
+        lambda config, logger: (
+            [metadata_raw],
+            [market_candidate],
+            market_candidate,
+            MetadataSelectionDiagnostics(
+                selected_market_id=market_candidate.market_id,
+                selected_market_slug=market_candidate.market_slug,
+                selected_window_id="btc-5m-20260313T120500Z",
+                candidate_count=1,
+                admitted_count=1,
+                rejected_count_by_reason={},
+            ),
+        ),
     )
     monkeypatch.setattr(
         "rtds.collectors.phase1_capture._collect_chainlink_ticks",
@@ -132,6 +148,7 @@ def test_phase1_capture_writes_frozen_raw_and_normalized_layouts(
     result = run_phase1_capture(config, logger=_logger())
 
     assert result.summary_path.exists()
+    assert result.selected_window_id == "btc-5m-20260313T120500Z"
     assert (
         tmp_path
         / "data"
