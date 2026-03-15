@@ -77,6 +77,7 @@ Optional resilience tuning:
 
 - Log file: `logs/collect_<session>.log`
 - Summary artifact: `artifacts/collect/date=YYYY-MM-DD/session=<session>/summary.json`
+- Admission artifact: `artifacts/collect/date=YYYY-MM-DD/session=<session>/admission_summary.json`
 - Per-sample diagnostics: `artifacts/collect/date=YYYY-MM-DD/session=<session>/sample_diagnostics.jsonl`
 
 ## Output layout
@@ -133,6 +134,7 @@ Check the latest summary:
 
 ```bash
 find artifacts/collect -name summary.json | sort | tail -n 1 | xargs cat
+find artifacts/collect -name admission_summary.json | sort | tail -n 1 | xargs cat
 ```
 
 For a smoke session, confirm:
@@ -151,5 +153,7 @@ For a hardened pilot, also confirm:
 
 - `session_diagnostics.termination_reason` is `completed`
 - `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
+- `admission_summary.json` reports family-compliance counts, off-family switch count, degraded samples inside/outside rollover grace, Chainlink continuity, exchange venue continuity, mapped window count, open-anchor confidence breakdown, and `snapshot_eligible_sample_count`
 - any `degraded_empty_book` sample does not terminate the session by itself
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`
+- `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder

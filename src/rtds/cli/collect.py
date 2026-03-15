@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from rtds.collectors.admission_summary import write_capture_admission_summary
 from rtds.collectors.phase1_capture import (
     DEFAULT_BASE_BACKOFF_SECONDS,
     DEFAULT_DURATION_SECONDS,
@@ -195,7 +196,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"phase-1 capture failed: {exc}", file=sys.stderr)
         return 1
 
+    try:
+        admission_summary_path = write_capture_admission_summary(result)
+    except Exception as exc:  # pragma: no cover - exercised through integration paths
+        logger.exception("phase-1 capture admission summary failed")
+        print(f"phase-1 capture admission summary failed: {exc}", file=sys.stderr)
+        return 1
+
     logger.info("summary artifact written to %s", result.summary_path)
+    logger.info("admission summary artifact written to %s", admission_summary_path)
     print(result.summary_path)
     return 0
 
