@@ -11,7 +11,11 @@ from typing import Any
 
 from rtds.collectors.polymarket.metadata import MarketMetadataCandidate
 from rtds.core.time import parse_utc
-from rtds.mapping.anchor_assignment import DEFAULT_ORACLE_FEED_ID, ChainlinkTick
+from rtds.mapping.anchor_assignment import (
+    DEFAULT_ORACLE_FEED_ID,
+    ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
+    ChainlinkTick,
+)
 from rtds.schemas.normalized import ExchangeQuote, PolymarketQuote
 from rtds.schemas.snapshot import SnapshotRecord
 from rtds.schemas.window_reference import WindowReferenceRecord
@@ -187,6 +191,9 @@ def _row_to_chainlink_tick(row: dict[str, Any]) -> ChainlinkTick:
         recv_ts=None if row.get("recv_ts") is None else parse_utc(str(row["recv_ts"])),
         oracle_feed_id=str(row.get("oracle_feed_id", DEFAULT_ORACLE_FEED_ID)),
         round_id=_optional_str(row.get("round_id")),
+        oracle_source=str(row.get("oracle_source", ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC)),
+        bid_price=_optional_decimal(row.get("bid_price")),
+        ask_price=_optional_decimal(row.get("ask_price")),
     )
 
 

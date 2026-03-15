@@ -15,6 +15,10 @@ from rtds.collectors.phase1_capture import (
     DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS,
     DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS,
     DEFAULT_CHAINLINK_POLL_INTERVAL_SECONDS,
+    DEFAULT_CHAINLINK_SOURCE_PREFERENCE,
+    DEFAULT_CHAINLINK_STREAMS_BASE_URL,
+    DEFAULT_CHAINLINK_STREAMS_FEED_ID,
+    DEFAULT_CHAINLINK_STREAMS_PAGE_URL,
     DEFAULT_DURATION_SECONDS,
     DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS,
     DEFAULT_MAX_BACKOFF_SECONDS,
@@ -159,6 +163,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chainlink-poll-interval-seconds", type=float, default=None)
     parser.add_argument("--exchange-poll-interval-seconds", type=float, default=None)
     parser.add_argument("--polymarket-quote-poll-interval-seconds", type=float, default=None)
+    parser.add_argument(
+        "--chainlink-source-preference",
+        choices=("streams_public", "snapshot_rpc"),
+        default=DEFAULT_CHAINLINK_SOURCE_PREFERENCE,
+    )
+    parser.add_argument(
+        "--chainlink-streams-base-url",
+        default=DEFAULT_CHAINLINK_STREAMS_BASE_URL,
+    )
+    parser.add_argument(
+        "--chainlink-streams-page-url",
+        default=DEFAULT_CHAINLINK_STREAMS_PAGE_URL,
+    )
+    parser.add_argument(
+        "--chainlink-streams-feed-id",
+        default=DEFAULT_CHAINLINK_STREAMS_FEED_ID,
+    )
     parser.add_argument(
         "--boundary-burst-enabled",
         action=argparse.BooleanOptionalAction,
@@ -310,6 +331,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         boundary_burst_enabled=bool(timing["boundary_burst_enabled"]),
         boundary_burst_window_seconds=float(timing["boundary_burst_window_seconds"]),
         boundary_burst_interval_seconds=float(timing["boundary_burst_interval_seconds"]),
+        chainlink_source_preference=str(args.chainlink_source_preference),
+        chainlink_streams_base_url=str(args.chainlink_streams_base_url),
+        chainlink_streams_page_url=str(args.chainlink_streams_page_url),
+        chainlink_streams_feed_id=str(args.chainlink_streams_feed_id),
     )
     try:
         result = run_phase1_capture(config, logger=logger)

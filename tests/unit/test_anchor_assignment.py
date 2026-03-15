@@ -69,12 +69,14 @@ def test_anchor_assignment_uses_exact_boundary_ticks_when_present() -> None:
     assert record.chainlink_open_anchor_confidence == "high"
     assert record.chainlink_open_anchor_price == Decimal("84000.10")
     assert record.chainlink_open_anchor_ts == parse_utc("2026-03-13T12:05:00Z")
+    assert record.chainlink_open_anchor_source == "chainlink_snapshot_rpc"
     assert record.chainlink_open_anchor_offset_ms == 0
     assert record.chainlink_settle_method == EXACT_BOUNDARY_METHOD
     assert record.chainlink_settle_status == ASSIGNED_STATUS
     assert record.chainlink_settle_confidence == "high"
     assert record.chainlink_settle_price == Decimal("84025.50")
     assert record.chainlink_settle_ts == parse_utc("2026-03-13T12:10:00Z")
+    assert record.chainlink_settle_source == "chainlink_snapshot_rpc"
     assert record.resolved_up is True
     assert record.settle_minus_open == Decimal("25.40")
     assert record.outcome_status == "resolved"
@@ -153,6 +155,7 @@ def test_anchor_assignment_marks_conflicting_ticks_as_ambiguous() -> None:
     assert record.chainlink_open_anchor_status == AMBIGUOUS_STATUS
     assert record.chainlink_open_anchor_confidence == "none"
     assert record.chainlink_open_anchor_price is None
+    assert record.chainlink_open_anchor_source is None
     assert record.chainlink_settle_status == ASSIGNED_STATUS
     assert record.outcome_status == "ambiguous"
     assert record.assignment_status == "ambiguous"

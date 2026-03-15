@@ -9,7 +9,7 @@ This repo now has one sanctioned capture path for the phase-1 data pull:
 What it runs:
 
 - Polymarket metadata collector
-- Chainlink BTC/USD latest-round collector
+- Chainlink BTC/USD public Data Streams collector with RPC snapshot fallback
 - Binance BTCUSDT quote collector
 - Coinbase BTC-USD quote collector
 - Kraken XBT/USD quote collector
@@ -29,9 +29,11 @@ The original architecture still aims at source-faithful, continuously running co
 
 - it is bounded-session polling, not long-running
 - it uses public REST and RPC endpoints instead of the eventual websocket / RTDS-first stack
+- it now prefers the public delayed Chainlink Data Streams BTC/USD endpoint instead of the old `latestRoundData` RPC-only path because the public stream feed is boundary-usable under the current anchor policy
 - Polymarket metadata currently comes from the `up-or-down` event feed because that surface exposes the recurring BTC 5-minute family densely enough to select the exact target strip
 - it persists the minimum real raw and normalized datasets needed to unblock replay-day admission work
 - it now hardens the bounded acquisition path with retry/backoff, degraded-sample tracking, and threshold-based early termination because rollover-safe capture failed without that resilience layer
+- it still falls back to `latestRoundData` RPC for Chainlink continuity when the public stream endpoint is unavailable, and it records oracle-source lineage explicitly in normalized ticks and window references
 
 This deviation is deliberate. The immediate requirement is to prove the repo can produce real persisted files under the frozen layout without committing captured data or broadening the module surface prematurely.
 
@@ -81,6 +83,12 @@ Optional per-source cadence override:
   --boundary-burst-interval-seconds 1
 ```
 
+Optional oracle-source override:
+
+```bash
+./scripts/run_collectors.sh --chainlink-source-preference snapshot_rpc
+```
+
 Optional resilience tuning:
 
 ```bash
@@ -128,7 +136,7 @@ Healthy collectors produce log lines showing:
 
 - one selected BTC 5-minute target-family market with `market_id`, slug, and `window_id`
 - one or more capture samples
-- one or more Chainlink rounds captured
+- one or more Chainlink stream ticks or fallback rounds captured, with oracle-source lineage in diagnostics
 - Binance, Coinbase, and Kraken quote snapshots captured on each sample
 - one or more Polymarket quotes captured for the currently selected admitted family market
 - capture-schedule details showing effective per-source interval and whether boundary burst mode is active for quote/oracle samples
@@ -172,6 +180,7 @@ For a smoke session, confirm:
 - `session_diagnostics.empty_book_count`, `retry_count_by_source`, `retry_exhaustion_count_by_source`, and `termination_reason` are present in the summary artifact
 - `session_diagnostics.polymarket_failure_count_by_class`, `polymarket_selector_refresh_count`, `polymarket_selector_rebind_count`, and `polymarket_rollover_grace_sample_count` are present in the summary artifact
 - `data/raw/chainlink/...` has non-empty rows with stamped `recv_ts`
+- `data/normalized/chainlink_ticks/...` rows carry `oracle_source`, and boundary-validation runs should normally show `chainlink_stream_public_delayed`
 - `data/normalized/exchange_quotes/...` contains non-empty `binance`, `coinbase`, and `kraken` rows
 - `data/normalized/market_metadata_events/...` contains only admitted target-family rows, with slugs like `btc-updown-5m-<epoch>`
 - `data/normalized/polymarket_quotes/...` market IDs stay inside the admitted target-family strip even if they roll across multiple 5-minute windows during the session
@@ -181,6 +190,7 @@ For a hardened pilot, also confirm:
 - `session_diagnostics.termination_reason` is `completed`
 - `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
 - `admission_summary.json` reports family-compliance counts and off-family switch count from the final selected market/window binding per sample, while metadata-strip breadth and ambiguity are reported separately from family drift; it also includes degraded samples inside/outside rollover grace, Chainlink continuity, exchange venue continuity, mapped window count, open-anchor confidence breakdown, and `snapshot_eligible_sample_count`
+- `admission_summary.json` now reports `chainlink_continuity.oracle_source_count` so the pilot can be judged on the actual oracle source used, not a generic Chainlink label
 - `sample_diagnostics.jsonl` shows 1-second effective `capture_interval_seconds` for `chainlink`, `exchange`, and `polymarket_quotes` during pilot/admission mode, with `boundary_burst_active` toggling near 5-minute boundaries
 - any `degraded_empty_book` sample does not terminate the session by itself
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`

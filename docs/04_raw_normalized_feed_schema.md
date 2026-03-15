@@ -60,7 +60,7 @@ Current implementation notes:
 - the canonical replay runner currently loads normalized JSONL datasets from `data/normalized/...` rather than invoking live collectors
 - unified raw event schemas in `src/rtds/schemas/raw_events.py` are still a placeholder
 - Chainlink normalization in `src/rtds/normalizers/chainlink.py` is still a placeholder
-- the current live collection workflow is narrower than the target design: it uses bounded REST/RPC snapshot polling and Polymarket `up-or-down` tag-feed discovery instead of the eventual websocket / RTDS-first fleet
+- the current live collection workflow is narrower than the target design: it uses bounded public endpoint polling, now preferring the public delayed Chainlink Data Streams BTC/USD endpoint with RPC snapshot fallback, plus Polymarket `up-or-down` tag-feed discovery instead of the eventual websocket / RTDS-first fleet
 - persisted storage is implemented for `window_reference` plus the phase-1 raw and normalized JSONL partitions used by the live capture command
 
 These are implementation gaps, not changes in architectural direction. The design intent here still governs how the raw and normalized layers should be completed.
@@ -334,6 +334,7 @@ Recommended optional columns:
 - `sequence_id`
 - `round_id`
 - `stream_id`
+- `oracle_source`
 - `is_control_message`
 - `message_type`
 
@@ -715,6 +716,9 @@ Recommended optional columns:
 - `round_id`
 - `sequence_id`
 - `stream_id`
+- `oracle_source`
+- `bid_price`
+- `ask_price`
 - `source_event_missing_ts_flag`
 - `gap_candidate_flag`
 
@@ -727,6 +731,7 @@ Notes:
 
 - This is the canonical oracle-event table for phase 1.
 - If RTDS lacks native IDs, do not fabricate oracle business IDs; use nullable lineage fields plus timestamp/row lineage.
+- The current phase-1 collector now distinguishes at least `chainlink_stream_public_delayed` and `chainlink_snapshot_rpc` in `oracle_source` so downstream anchor assignment can preserve source lineage honestly.
 
 ## 9.6 `market_metadata_events`
 

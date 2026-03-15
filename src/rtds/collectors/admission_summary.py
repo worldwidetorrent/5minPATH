@@ -101,6 +101,7 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
     exchange_max_consecutive_missing: Counter[str] = Counter()
     exchange_current_missing: Counter[str] = Counter()
     chainlink_present_count = 0
+    chainlink_oracle_source_count: Counter[str] = Counter()
     polymarket_present_count = 0
     samples_with_all_exchange_venues = 0
     snapshot_eligible_sample_count = 0
@@ -130,6 +131,10 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
 
         if chainlink_result.get("normalized_row_count", 0) > 0:
             chainlink_present_count += 1
+        chainlink_details = _details(chainlink_result)
+        oracle_source = chainlink_details.get("oracle_source")
+        if isinstance(oracle_source, str) and oracle_source:
+            chainlink_oracle_source_count[oracle_source] += 1
 
         exchange_details = _details(exchange_result)
         venue_statuses = exchange_details.get("venue_statuses", {})
@@ -271,6 +276,7 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
         "chainlink_continuity": {
             "samples_with_ticks": chainlink_present_count,
             "samples_missing_ticks": sample_count - chainlink_present_count,
+            "oracle_source_count": dict(sorted(chainlink_oracle_source_count.items())),
             "max_consecutive_missing_samples": int(
                 result.session_diagnostics.max_consecutive_missing_by_source.get("chainlink", 0)
             ),

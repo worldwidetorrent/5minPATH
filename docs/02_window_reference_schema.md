@@ -194,6 +194,18 @@ Definition:
 
 Native Chainlink/RTDS event identifier or round identifier if available.
 
+### `chainlink_open_anchor_source`
+String, nullable.
+
+Definition:
+
+Oracle-source lineage for the event assigned as the open anchor.
+
+Examples:
+
+- `chainlink_stream_public_delayed`
+- `chainlink_snapshot_rpc`
+
 ### `chainlink_open_anchor_method`
 Enum, non-null.
 
@@ -258,6 +270,18 @@ Timestamp of the Chainlink event selected as the settle observation.
 
 ### `chainlink_settle_event_id`
 String, nullable.
+
+### `chainlink_settle_source`
+String, nullable.
+
+Definition:
+
+Oracle-source lineage for the event assigned as the settle value.
+
+Examples:
+
+- `chainlink_stream_public_delayed`
+- `chainlink_snapshot_rpc`
 
 ### `chainlink_settle_method`
 Enum, non-null.

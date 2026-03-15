@@ -30,8 +30,13 @@ from rtds.collectors.polymarket.metadata import (
     normalize_market_payload,
 )
 from rtds.core.enums import VenueCode
-from rtds.core.time import format_utc
-from rtds.mapping.anchor_assignment import DEFAULT_ORACLE_FEED_ID, ChainlinkTick
+from rtds.core.time import format_utc, parse_utc
+from rtds.mapping.anchor_assignment import (
+    DEFAULT_ORACLE_FEED_ID,
+    ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
+    ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+    ChainlinkTick,
+)
 from rtds.mapping.market_mapper import map_candidates_to_windows
 from rtds.mapping.window_ids import daily_window_schedule
 from rtds.normalizers.exchange import (
@@ -63,9 +68,17 @@ DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE = 5
 DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS = 90.0
 DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS = 15.0
 DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS = 1.0
+DEFAULT_CHAINLINK_SOURCE_PREFERENCE = "streams_public"
 DEFAULT_CHAINLINK_RPC_URL = "https://arb1.arbitrum.io/rpc"
 DEFAULT_CHAINLINK_PROXY_ADDRESS = "0x6ce185860a4963106506C203335A2910413708e9"
 DEFAULT_CHAINLINK_FEED_PAGE_URL = "https://data.chain.link/feeds/arbitrum/mainnet/btc-usd"
+DEFAULT_CHAINLINK_STREAMS_BASE_URL = "https://data.chain.link"
+DEFAULT_CHAINLINK_STREAMS_PAGE_URL = (
+    "https://data.chain.link/streams/btc-usd-cexprice-streams"
+)
+DEFAULT_CHAINLINK_STREAMS_FEED_ID = (
+    "0x00039d9e45394f473ab1f050a1b963e6b05351e52d71e507509ada0c95ed75b8"
+)
 DEFAULT_BINANCE_BOOK_TICKER_URL = "https://api.binance.us/api/v3/ticker/bookTicker?symbol=BTCUSDT"
 DEFAULT_COINBASE_BOOK_URL = "https://api.exchange.coinbase.com/products/BTC-USD/book?level=1"
 DEFAULT_KRAKEN_BOOK_URL = "https://api.kraken.com/0/public/Depth?pair=XBTUSD&count=1"
@@ -112,9 +125,13 @@ class Phase1CaptureConfig:
     boundary_burst_enabled: bool = False
     boundary_burst_window_seconds: float = DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS
     boundary_burst_interval_seconds: float = DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS
+    chainlink_source_preference: str = DEFAULT_CHAINLINK_SOURCE_PREFERENCE
     chainlink_rpc_url: str = DEFAULT_CHAINLINK_RPC_URL
     chainlink_proxy_address: str = DEFAULT_CHAINLINK_PROXY_ADDRESS
     chainlink_feed_page_url: str = DEFAULT_CHAINLINK_FEED_PAGE_URL
+    chainlink_streams_base_url: str = DEFAULT_CHAINLINK_STREAMS_BASE_URL
+    chainlink_streams_page_url: str = DEFAULT_CHAINLINK_STREAMS_PAGE_URL
+    chainlink_streams_feed_id: str = DEFAULT_CHAINLINK_STREAMS_FEED_ID
     binance_book_ticker_url: str = DEFAULT_BINANCE_BOOK_TICKER_URL
     coinbase_book_url: str = DEFAULT_COINBASE_BOOK_URL
     kraken_book_url: str = DEFAULT_KRAKEN_BOOK_URL
@@ -1014,7 +1031,7 @@ def _fetch_polymarket_market_pages(
     return raw_messages, candidates
 
 
-def _collect_chainlink_ticks(
+def _collect_chainlink_snapshot_tick(
     config: Phase1CaptureConfig,
     *,
     logger: logging.Logger,
@@ -1098,6 +1115,7 @@ def _collect_chainlink_ticks(
         recv_ts=recv_ts,
         oracle_feed_id=DEFAULT_ORACLE_FEED_ID,
         round_id=round_id,
+        oracle_source=ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
     )
     raw_row = {
         "raw_event_id": tick.event_id,
@@ -1108,6 +1126,7 @@ def _collect_chainlink_ticks(
         "recv_ts": recv_ts,
         "proc_ts": proc_ts,
         "oracle_feed_id": DEFAULT_ORACLE_FEED_ID,
+        "oracle_source": ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
         "round_id": round_id,
         "decimals": decimals_result.payload,
         "rpc_payload": rpc_response.payload,
@@ -1119,6 +1138,248 @@ def _collect_chainlink_ticks(
         raw_rows=(raw_row,),
         normalized_rows=(tick,),
         retries=decimals_result.retries + rpc_response.retries,
+        details={
+            "oracle_source": ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
+            "fallback_used": False,
+        },
+    )
+
+
+def _chainlink_streams_live_reports_url(config: Phase1CaptureConfig) -> str:
+    variables = json.dumps(
+        {"feedId": config.chainlink_streams_feed_id},
+        separators=(",", ":"),
+    )
+    return (
+        f"{config.chainlink_streams_base_url.rstrip('/')}/api/query-timescale?"
+        + urlencode(
+            {
+                "query": "LIVE_STREAM_REPORTS_QUERY",
+                "variables": variables,
+            }
+        )
+    )
+
+
+def _chainlink_stream_event_id(
+    *,
+    feed_id: str,
+    event_ts: datetime,
+    price: Decimal,
+    bid_price: Decimal | None,
+    ask_price: Decimal | None,
+) -> str:
+    digest = sha256()
+    digest.update(feed_id.encode("utf-8"))
+    digest.update(format_utc(event_ts, timespec="milliseconds").encode("utf-8"))
+    digest.update(str(price).encode("utf-8"))
+    digest.update(str(bid_price).encode("utf-8"))
+    digest.update(str(ask_price).encode("utf-8"))
+    return f"chainlink:stream:{digest.hexdigest()[:16]}"
+
+
+def _collect_chainlink_stream_tick(
+    config: Phase1CaptureConfig,
+    *,
+    logger: logging.Logger,
+) -> SourceCaptureResult:
+    recv_ts = datetime.now(UTC)
+    request_url = _chainlink_streams_live_reports_url(config)
+    response = _http_json(
+        request_url,
+        timeout_seconds=config.timeout_seconds,
+        max_retries=config.max_fetch_retries,
+        base_backoff_seconds=config.base_backoff_seconds,
+        max_backoff_seconds=config.max_backoff_seconds,
+        source_name="chainlink",
+        logger=logger,
+    )
+    if response.status != "success":
+        return SourceCaptureResult(
+            source_name="chainlink",
+            status=response.status,
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="chainlink",
+                    request_url=request_url,
+                    recv_ts=recv_ts,
+                    status=response.status,
+                    failure_type=response.failure_type,
+                    failure_message=response.failure_message,
+                    details={
+                        "oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+                        "query": "LIVE_STREAM_REPORTS_QUERY",
+                    },
+                ),
+            ),
+            normalized_rows=(),
+            retries=response.retries,
+            failure_type=response.failure_type,
+            failure_message=response.failure_message,
+            http_status=response.http_status,
+            details={
+                "oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+                "request_url": request_url,
+            },
+        )
+
+    payload = response.payload
+    nodes = (
+        payload.get("data", {})
+        .get("liveStreamReports", {})
+        .get("nodes", [])
+        if isinstance(payload, dict)
+        else []
+    )
+    if not isinstance(nodes, list) or not nodes:
+        return SourceCaptureResult(
+            source_name="chainlink",
+            status="degraded",
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="chainlink",
+                    request_url=request_url,
+                    recv_ts=recv_ts,
+                    status="degraded",
+                    failure_type="MissingStreamReports",
+                    failure_message="public Chainlink stream query returned no report nodes",
+                    details={
+                        "oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+                        "query": "LIVE_STREAM_REPORTS_QUERY",
+                    },
+                ),
+            ),
+            normalized_rows=(),
+            retries=response.retries,
+            failure_class="stream_reports_missing",
+            failure_type="MissingStreamReports",
+            failure_message="public Chainlink stream query returned no report nodes",
+            http_status=response.http_status,
+            details={
+                "oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+                "request_url": request_url,
+            },
+        )
+
+    latest_node = max(
+        nodes,
+        key=lambda node: str(node.get("validFromTimestamp", "")),
+    )
+    proc_ts = datetime.now(UTC)
+    event_ts = parse_utc(str(latest_node["validFromTimestamp"]))
+    price = Decimal(str(latest_node["price"])) / (Decimal(10) ** 18)
+    bid_price = (
+        None
+        if latest_node.get("bid") in (None, "")
+        else Decimal(str(latest_node["bid"])) / (Decimal(10) ** 18)
+    )
+    ask_price = (
+        None
+        if latest_node.get("ask") in (None, "")
+        else Decimal(str(latest_node["ask"])) / (Decimal(10) ** 18)
+    )
+    event_id = _chainlink_stream_event_id(
+        feed_id=config.chainlink_streams_feed_id,
+        event_ts=event_ts,
+        price=price,
+        bid_price=bid_price,
+        ask_price=ask_price,
+    )
+    tick = ChainlinkTick(
+        event_id=event_id,
+        event_ts=event_ts,
+        price=price,
+        recv_ts=recv_ts,
+        oracle_feed_id=DEFAULT_ORACLE_FEED_ID,
+        oracle_source=ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+        bid_price=bid_price,
+        ask_price=ask_price,
+    )
+    raw_row = {
+        "raw_event_id": event_id,
+        "source_type": "chainlink_stream_public_timescale",
+        "request_url": request_url,
+        "feed_page_url": config.chainlink_streams_page_url,
+        "recv_ts": recv_ts,
+        "proc_ts": proc_ts,
+        "oracle_feed_id": DEFAULT_ORACLE_FEED_ID,
+        "oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+        "stream_feed_id": config.chainlink_streams_feed_id,
+        "query_name": "LIVE_STREAM_REPORTS_QUERY",
+        "latest_report": latest_node,
+        "response_headers": response.headers,
+    }
+    logger.info(
+        "captured Chainlink stream tick at %s via %s",
+        format_utc(event_ts, timespec="milliseconds"),
+        ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+    )
+    return SourceCaptureResult(
+        source_name="chainlink",
+        status="success",
+        raw_rows=(raw_row,),
+        normalized_rows=(tick,),
+        retries=response.retries,
+        details={
+            "oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+            "fallback_used": False,
+            "request_url": request_url,
+            "stream_feed_id": config.chainlink_streams_feed_id,
+        },
+    )
+
+
+def _collect_chainlink_ticks(
+    config: Phase1CaptureConfig,
+    *,
+    logger: logging.Logger,
+) -> SourceCaptureResult:
+    if config.chainlink_source_preference == "snapshot_rpc":
+        return _collect_chainlink_snapshot_tick(config, logger=logger)
+
+    preferred_result = _collect_chainlink_stream_tick(config, logger=logger)
+    if preferred_result.status == "success":
+        return preferred_result
+
+    fallback_result = _collect_chainlink_snapshot_tick(config, logger=logger)
+    if fallback_result.status != "success":
+        combined_raw_rows = preferred_result.raw_rows + fallback_result.raw_rows
+        combined_retries = preferred_result.retries + fallback_result.retries
+        return SourceCaptureResult(
+            source_name="chainlink",
+            status=fallback_result.status,
+            raw_rows=combined_raw_rows,
+            normalized_rows=(),
+            retries=combined_retries,
+            failure_class=fallback_result.failure_class or preferred_result.failure_class,
+            failure_type=fallback_result.failure_type or preferred_result.failure_type,
+            failure_message=(
+                fallback_result.failure_message or preferred_result.failure_message
+            ),
+            http_status=fallback_result.http_status or preferred_result.http_status,
+            details={
+                "oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+                "preferred_oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+                "fallback_oracle_source": ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
+                "fallback_used": True,
+                "preferred_status": preferred_result.status,
+                "fallback_status": fallback_result.status,
+            },
+        )
+
+    return SourceCaptureResult(
+        source_name="chainlink",
+        status="success",
+        raw_rows=preferred_result.raw_rows + fallback_result.raw_rows,
+        normalized_rows=fallback_result.normalized_rows,
+        retries=preferred_result.retries + fallback_result.retries,
+        details={
+            "oracle_source": ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
+            "preferred_oracle_source": ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED,
+            "fallback_oracle_source": ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC,
+            "fallback_used": True,
+            "preferred_status": preferred_result.status,
+        },
     )
 
 

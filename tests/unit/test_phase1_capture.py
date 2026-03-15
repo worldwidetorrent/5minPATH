@@ -9,10 +9,13 @@ from pathlib import Path
 
 from rtds.collectors.phase1_capture import (
     DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS,
+    FetchResult,
     MetadataSelectionDiagnostics,
     Phase1CaptureConfig,
     SourceCaptureResult,
     _build_polymarket_quote_payload,
+    _collect_chainlink_stream_tick,
+    _collect_chainlink_ticks,
     _collect_polymarket_metadata,
     _decode_latest_round_data,
     _run_with_retries,
@@ -20,6 +23,7 @@ from rtds.collectors.phase1_capture import (
     run_phase1_capture,
 )
 from rtds.collectors.polymarket.metadata import RawMetadataMessage, normalize_market_payload
+from rtds.core.time import parse_utc
 from rtds.mapping.anchor_assignment import ChainlinkTick
 from rtds.normalizers.exchange import (
     normalize_binance_quote,
@@ -46,6 +50,103 @@ def test_decode_latest_round_data_parses_chainlink_tuple() -> None:
     assert decoded["round_id"] == 18446744073710347430
     assert decoded["answer"] == 1822063919192064
     assert decoded["updated_at"] == 1773532054
+
+
+def test_collect_chainlink_stream_tick_uses_public_stream_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._http_json",
+        lambda *args, **kwargs: FetchResult(
+            status="success",
+            payload={
+                "data": {
+                    "liveStreamReports": {
+                        "nodes": [
+                            {
+                                "validFromTimestamp": "2026-03-15T23:50:28+00:00",
+                                "price": "72656239970000000000000",
+                                "bid": "72653166000000000000000",
+                                "ask": "72657366352216465000000",
+                            }
+                        ]
+                    }
+                }
+            },
+            attempts=1,
+            retries=0,
+            http_status=200,
+            headers={"content-type": "application/json"},
+        ),
+    )
+
+    result = _collect_chainlink_stream_tick(
+        Phase1CaptureConfig(
+            data_root=Path("data"),
+            artifacts_root=Path("artifacts"),
+            logs_root=Path("logs"),
+            temp_root=Path("tmp"),
+            session_id="test-session",
+        ),
+        logger=_logger(),
+    )
+
+    assert result.status == "success"
+    assert result.details["oracle_source"] == "chainlink_stream_public_delayed"
+    tick = result.normalized_rows[0]
+    assert isinstance(tick, ChainlinkTick)
+    assert tick.event_ts == parse_utc("2026-03-15T23:50:28+00:00")
+    assert tick.price == Decimal("72656.23997")
+    assert tick.bid_price == Decimal("72653.166")
+    assert tick.ask_price == Decimal("72657.366352216465")
+    assert tick.oracle_source == "chainlink_stream_public_delayed"
+    assert result.raw_rows[0]["source_type"] == "chainlink_stream_public_timescale"
+
+
+def test_collect_chainlink_ticks_falls_back_to_snapshot_when_stream_degrades(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_stream_tick",
+        lambda config, logger: SourceCaptureResult(
+            source_name="chainlink",
+            status="degraded",
+            raw_rows=({"raw_event_id": "stream-failure"},),
+            normalized_rows=(),
+            failure_class="stream_reports_missing",
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_snapshot_tick",
+        lambda config, logger: SourceCaptureResult(
+            source_name="chainlink",
+            status="success",
+            raw_rows=({"raw_event_id": "snapshot-success"},),
+            normalized_rows=(
+                ChainlinkTick(
+                    event_id="chainlink:round:1",
+                    event_ts=parse_utc("2026-03-15T23:50:28Z"),
+                    price=Decimal("72656.23"),
+                    oracle_source="chainlink_snapshot_rpc",
+                ),
+            ),
+        ),
+    )
+
+    result = _collect_chainlink_ticks(
+        Phase1CaptureConfig(
+            data_root=Path("data"),
+            artifacts_root=Path("artifacts"),
+            logs_root=Path("logs"),
+            temp_root=Path("tmp"),
+            session_id="test-session",
+        ),
+        logger=_logger(),
+    )
+
+    assert result.status == "success"
+    assert [row["raw_event_id"] for row in result.raw_rows] == [
+        "stream-failure",
+        "snapshot-success",
+    ]
+    assert result.details["fallback_used"] is True
+    assert result.details["oracle_source"] == "chainlink_snapshot_rpc"
 
 
 def test_build_polymarket_quote_payload_uses_best_bid_and_best_ask() -> None:

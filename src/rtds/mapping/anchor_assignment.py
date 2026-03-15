@@ -40,6 +40,8 @@ from rtds.schemas.window_reference import WindowReferenceRecord
 SCHEMA_VERSION = WINDOW_REFERENCE_SCHEMA_VERSION
 ANCHOR_ASSIGNMENT_VERSION = "0.1.0"
 DEFAULT_ORACLE_FEED_ID = str(build_oracle_feed_id(AssetCode.BTC))
+ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC = "chainlink_snapshot_rpc"
+ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED = "chainlink_stream_public_delayed"
 
 EXACT_BOUNDARY_METHOD = "exact_boundary"
 FIRST_AFTER_BOUNDARY_METHOD = "first_after_boundary"
@@ -69,10 +71,15 @@ class ChainlinkTick:
     recv_ts: datetime | None = None
     oracle_feed_id: str = DEFAULT_ORACLE_FEED_ID
     round_id: str | None = None
+    oracle_source: str = ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC
+    bid_price: Decimal | None = None
+    ask_price: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id.strip():
             raise ValueError("event_id must not be empty")
+        if not self.oracle_source.strip():
+            raise ValueError("oracle_source must not be empty")
         object.__setattr__(
             self,
             "event_ts",
@@ -88,6 +95,18 @@ class ChainlinkTick:
                 self,
                 "recv_ts",
                 ensure_utc(self.recv_ts, field_name="recv_ts"),
+            )
+        if self.bid_price is not None:
+            object.__setattr__(
+                self,
+                "bid_price",
+                Decimal(validate_usd_price(self.bid_price, field_name="bid_price")),
+            )
+        if self.ask_price is not None:
+            object.__setattr__(
+                self,
+                "ask_price",
+                Decimal(validate_usd_price(self.ask_price, field_name="ask_price")),
             )
 
 
@@ -124,6 +143,7 @@ class BoundaryAssignment:
     ts: datetime | None
     event_id: str | None
     round_id: str | None
+    oracle_source: str | None
     method: str
     confidence: str
     status: str
@@ -254,6 +274,7 @@ def _assign_window_reference_from_sorted_ticks(
         chainlink_open_anchor_price=open_assignment.price,
         chainlink_open_anchor_ts=open_assignment.ts,
         chainlink_open_anchor_event_id=open_assignment.event_id,
+        chainlink_open_anchor_source=open_assignment.oracle_source,
         chainlink_open_anchor_method=open_assignment.method,
         chainlink_open_anchor_confidence=open_assignment.confidence,
         chainlink_open_anchor_status=open_assignment.status,
@@ -261,6 +282,7 @@ def _assign_window_reference_from_sorted_ticks(
         chainlink_settle_price=settle_assignment.price,
         chainlink_settle_ts=settle_assignment.ts,
         chainlink_settle_event_id=settle_assignment.event_id,
+        chainlink_settle_source=settle_assignment.oracle_source,
         chainlink_settle_method=settle_assignment.method,
         chainlink_settle_confidence=settle_assignment.confidence,
         chainlink_settle_status=settle_assignment.status,
@@ -343,6 +365,7 @@ def _assign_boundary(
         ts=None,
         event_id=None,
         round_id=None,
+        oracle_source=None,
         method=MISSING_METHOD,
         confidence=ConfidenceLevel.NONE.value,
         status=MISSING_STATUS,
@@ -369,6 +392,7 @@ def _build_assignment(
             ts=None,
             event_id=None,
             round_id=None,
+            oracle_source=None,
             method=method,
             confidence=ConfidenceLevel.NONE.value,
             status=AMBIGUOUS_STATUS,
@@ -389,6 +413,7 @@ def _build_assignment(
         ts=chosen_tick.event_ts,
         event_id=chosen_tick.event_id,
         round_id=chosen_tick.round_id,
+        oracle_source=chosen_tick.oracle_source,
         method=method,
         confidence=_confidence_for_offset(abs(offset_ms), policy=policy),
         status=ASSIGNED_STATUS,
@@ -481,6 +506,8 @@ __all__ = [
     "DEFAULT_OPEN_POLICY",
     "DEFAULT_OPEN_TOLERANCE_MS",
     "DEFAULT_ORACLE_FEED_ID",
+    "ORACLE_SOURCE_CHAINLINK_SNAPSHOT_RPC",
+    "ORACLE_SOURCE_CHAINLINK_STREAM_PUBLIC_DELAYED",
     "DEFAULT_SETTLE_POLICY",
     "DEFAULT_SETTLE_TOLERANCE_MS",
     "EXACT_BOUNDARY_METHOD",

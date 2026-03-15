@@ -77,6 +77,8 @@ def test_window_reference_writer_persists_partitioned_jsonl_rows(
     assert stored["chainlink_open_anchor_price"] == "84000.10"
     assert stored["chainlink_settle_price"] == "84025.50"
     assert stored["chainlink_open_anchor_ts"] == "2026-03-13T12:05:00Z"
+    assert stored["chainlink_open_anchor_source"] == "chainlink_snapshot_rpc"
+    assert stored["chainlink_settle_source"] == "chainlink_snapshot_rpc"
     assert stored["assignment_diagnostics"] == []
 
     round_tripped = WindowReferenceRecord.from_storage_dict(stored)

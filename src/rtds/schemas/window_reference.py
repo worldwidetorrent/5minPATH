@@ -9,7 +9,7 @@ from typing import Any
 
 from rtds.core.time import ensure_utc, format_utc, parse_utc
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,6 +35,7 @@ class WindowReferenceRecord:
     chainlink_open_anchor_price: Decimal | None
     chainlink_open_anchor_ts: datetime | None
     chainlink_open_anchor_event_id: str | None
+    chainlink_open_anchor_source: str | None
     chainlink_open_anchor_method: str
     chainlink_open_anchor_confidence: str
     chainlink_open_anchor_status: str
@@ -42,6 +43,7 @@ class WindowReferenceRecord:
     chainlink_settle_price: Decimal | None
     chainlink_settle_ts: datetime | None
     chainlink_settle_event_id: str | None
+    chainlink_settle_source: str | None
     chainlink_settle_method: str
     chainlink_settle_confidence: str
     chainlink_settle_status: str
