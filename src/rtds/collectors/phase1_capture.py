@@ -48,6 +48,10 @@ DEFAULT_METADATA_LIMIT = 500
 DEFAULT_METADATA_PAGES = 1
 DEFAULT_DURATION_SECONDS = 0.0
 DEFAULT_POLL_INTERVAL_SECONDS = 60.0
+DEFAULT_METADATA_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
+DEFAULT_CHAINLINK_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
+DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
+DEFAULT_POLYMARKET_QUOTE_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
 DEFAULT_MAX_FETCH_RETRIES = 2
 DEFAULT_BASE_BACKOFF_SECONDS = 0.5
 DEFAULT_MAX_BACKOFF_SECONDS = 5.0
@@ -57,6 +61,8 @@ DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE = 5
 DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS = 90.0
+DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS = 15.0
+DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS = 1.0
 DEFAULT_CHAINLINK_RPC_URL = "https://arb1.arbitrum.io/rpc"
 DEFAULT_CHAINLINK_PROXY_ADDRESS = "0x6ce185860a4963106506C203335A2910413708e9"
 DEFAULT_CHAINLINK_FEED_PAGE_URL = "https://data.chain.link/feeds/arbitrum/mainnet/btc-usd"
@@ -67,6 +73,7 @@ DEFAULT_POLYMARKET_BOOK_URL = "https://clob.polymarket.com/book?token_id={token_
 PART_FILE_NAME = "part-00000.jsonl"
 USER_AGENT = "testingproject-rtds/0.1.0"
 RETRYABLE_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+CORE_CAPTURE_SOURCES = ("chainlink", "exchange", "polymarket_quotes")
 T = TypeVar("T")
 
 
@@ -85,6 +92,12 @@ class Phase1CaptureConfig:
     metadata_pages: int = DEFAULT_METADATA_PAGES
     duration_seconds: float = DEFAULT_DURATION_SECONDS
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
+    metadata_poll_interval_seconds: float = DEFAULT_METADATA_POLL_INTERVAL_SECONDS
+    chainlink_poll_interval_seconds: float = DEFAULT_CHAINLINK_POLL_INTERVAL_SECONDS
+    exchange_poll_interval_seconds: float = DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS
+    polymarket_quote_poll_interval_seconds: float = (
+        DEFAULT_POLYMARKET_QUOTE_POLL_INTERVAL_SECONDS
+    )
     max_fetch_retries: int = DEFAULT_MAX_FETCH_RETRIES
     base_backoff_seconds: float = DEFAULT_BASE_BACKOFF_SECONDS
     max_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
@@ -96,6 +109,9 @@ class Phase1CaptureConfig:
         DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE
     )
     polymarket_rollover_grace_seconds: float = DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS
+    boundary_burst_enabled: bool = False
+    boundary_burst_window_seconds: float = DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS
+    boundary_burst_interval_seconds: float = DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS
     chainlink_rpc_url: str = DEFAULT_CHAINLINK_RPC_URL
     chainlink_proxy_address: str = DEFAULT_CHAINLINK_PROXY_ADDRESS
     chainlink_feed_page_url: str = DEFAULT_CHAINLINK_FEED_PAGE_URL
@@ -346,7 +362,14 @@ def run_phase1_capture(
 
     duration_seconds = max(config.duration_seconds, 0.0)
     poll_interval_seconds = max(config.poll_interval_seconds, 0.0)
-    deadline = time.monotonic() + duration_seconds if duration_seconds > 0 else None
+    capture_started_monotonic = time.monotonic()
+    deadline = (
+        capture_started_monotonic + duration_seconds if duration_seconds > 0 else None
+    )
+    last_capture_monotonic: dict[str, float | None] = {
+        source_name: None for source_name in CORE_CAPTURE_SOURCES
+    }
+    last_metadata_refresh_monotonic = capture_started_monotonic
     sample_count = 0
     degraded_sample_count = 0
     failed_sample_count = 0
@@ -363,9 +386,35 @@ def run_phase1_capture(
     termination_reason = "completed"
 
     while True:
-        sample_count += 1
-        logger.info("starting capture sample %s", sample_count)
         sample_started_at = datetime.now(UTC)
+        now_monotonic = time.monotonic()
+        metadata_interval_seconds = max(config.metadata_poll_interval_seconds, 0.0)
+        if (
+            metadata_interval_seconds > 0
+            and now_monotonic - last_metadata_refresh_monotonic >= metadata_interval_seconds
+        ):
+            try:
+                refreshed_metadata_raw, refreshed_metadata_rows, _, _ = (
+                    _collect_polymarket_metadata(
+                        config,
+                        logger=logger,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("scheduled metadata refresh failed: %s", exc)
+            else:
+                metadata_output_raw.extend(refreshed_metadata_raw)
+                metadata_output_rows.extend(refreshed_metadata_rows)
+                active_metadata_rows = list(refreshed_metadata_rows)
+                _, active_admitted_window_ids, _ = _admitted_family_candidates(
+                    active_metadata_rows
+                )
+                last_metadata_refresh_monotonic = now_monotonic
+                logger.info(
+                    "scheduled metadata refresh admitted %s target-family rows",
+                    len(active_metadata_rows),
+                )
+
         sample_market: MarketMetadataCandidate | None = None
         selected_window_id: str | None = None
         family_validation_status = "selected"
@@ -409,16 +458,52 @@ def run_phase1_capture(
             sample_diagnostics_rows.append(sample_result.to_summary_dict())
             if termination_reason != "completed":
                 break
-            if deadline is None or poll_interval_seconds <= 0:
+            if deadline is None:
                 break
-            remaining_seconds = deadline - time.monotonic() if deadline is not None else 0.0
-            if remaining_seconds <= 0:
+            sleep_seconds = _next_capture_sleep_seconds(
+                config,
+                now_monotonic=now_monotonic,
+                current_ts=sample_started_at,
+                selected_market=None,
+                last_capture_monotonic=last_capture_monotonic,
+                deadline=deadline,
+            )
+            if sleep_seconds is None or sleep_seconds <= 0:
                 break
-            sleep_seconds = min(poll_interval_seconds, remaining_seconds)
             logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
             time.sleep(sleep_seconds)
             continue
 
+        due_by_source = {
+            source_name: _source_capture_due(
+                config,
+                source_name=source_name,
+                current_ts=sample_started_at,
+                selected_market=sample_market,
+                last_capture_monotonic=last_capture_monotonic[source_name],
+                now_monotonic=now_monotonic,
+            )
+            for source_name in CORE_CAPTURE_SOURCES
+        }
+        if not any(due_by_source.values()):
+            if deadline is None:
+                break
+            sleep_seconds = _next_capture_sleep_seconds(
+                config,
+                now_monotonic=now_monotonic,
+                current_ts=sample_started_at,
+                selected_market=sample_market,
+                last_capture_monotonic=last_capture_monotonic,
+                deadline=deadline,
+            )
+            if sleep_seconds is None or sleep_seconds <= 0:
+                break
+            logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
+            time.sleep(sleep_seconds)
+            continue
+
+        sample_count += 1
+        logger.info("starting capture sample %s", sample_count)
         if sample_market.market_id != selected_market.market_id:
             logger.info(
                 "rolling Polymarket sample market to %s slug=%s window_id=%s",
@@ -427,9 +512,21 @@ def run_phase1_capture(
                 selected_window_id,
             )
 
-        chainlink_result = _collect_chainlink_ticks(config, logger=logger)
-        exchange_result = _collect_exchange_quotes(config, logger=logger)
-        polymarket_resolution = _resolve_polymarket_quote_capture(
+        chainlink_result = _collect_due_chainlink_ticks(
+            config,
+            logger=logger,
+            due=due_by_source["chainlink"],
+            current_ts=sample_started_at,
+            selected_market=sample_market,
+        )
+        exchange_result = _collect_due_exchange_quotes(
+            config,
+            logger=logger,
+            due=due_by_source["exchange"],
+            current_ts=sample_started_at,
+            selected_market=sample_market,
+        )
+        polymarket_resolution = _resolve_due_polymarket_quote_capture(
             config,
             metadata_rows=active_metadata_rows,
             admitted_window_ids=active_admitted_window_ids,
@@ -438,6 +535,7 @@ def run_phase1_capture(
             current_ts=sample_started_at,
             prior_consecutive_missing=consecutive_missing_by_source["polymarket_quotes"],
             logger=logger,
+            due=due_by_source["polymarket_quotes"],
         )
         if polymarket_resolution.metadata_raw_rows:
             metadata_output_raw.extend(polymarket_resolution.metadata_raw_rows)
@@ -468,12 +566,14 @@ def run_phase1_capture(
 
         for source_name, result in source_results.items():
             retry_count_by_source[source_name] += result.retries
-            if result.status != "success":
+            if result.status not in {"success", "not_due"}:
                 source_failure_count_by_source[source_name] += 1
                 if source_name == "polymarket_quotes" and result.failure_class is not None:
                     polymarket_failure_count_by_class[result.failure_class] += 1
                 if result.status == "retry_exhausted":
                     retry_exhaustion_count_by_source[source_name] += 1
+            if result.status == "not_due":
+                continue
             missing_output = len(result.normalized_rows) == 0
             if missing_output:
                 consecutive_missing_by_source[source_name] += 1
@@ -483,6 +583,7 @@ def run_phase1_capture(
                 max_consecutive_missing_by_source[source_name],
                 consecutive_missing_by_source[source_name],
             )
+            last_capture_monotonic[source_name] = now_monotonic
 
         if polymarket_result.status == "degraded_empty_book":
             empty_book_count += 1
@@ -497,7 +598,7 @@ def run_phase1_capture(
         degraded_sources = tuple(
             source_name
             for source_name, result in source_results.items()
-            if result.status != "success"
+            if result.status not in {"success", "not_due"}
         )
         terminal_source_failure = any(
             result.failure_class in {"terminal_invalid_market", "terminal_schema_failure"}
@@ -505,7 +606,8 @@ def run_phase1_capture(
         )
         if degraded_sources:
             if terminal_source_failure or all(
-                len(result.normalized_rows) == 0 for result in source_results.values()
+                result.status != "not_due" and len(result.normalized_rows) == 0
+                for result in source_results.values()
             ):
                 sample_status = "failed"
                 failed_sample_count += 1
@@ -562,12 +664,16 @@ def run_phase1_capture(
 
         if deadline is None:
             break
-        remaining_seconds = deadline - time.monotonic()
-        if remaining_seconds <= 0:
+        sleep_seconds = _next_capture_sleep_seconds(
+            config,
+            now_monotonic=now_monotonic,
+            current_ts=sample_started_at,
+            selected_market=sample_market,
+            last_capture_monotonic=last_capture_monotonic,
+            deadline=deadline,
+        )
+        if sleep_seconds is None or sleep_seconds <= 0:
             break
-        if poll_interval_seconds <= 0:
-            break
-        sleep_seconds = min(poll_interval_seconds, remaining_seconds)
         logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
         time.sleep(sleep_seconds)
 
@@ -1016,6 +1122,28 @@ def _collect_chainlink_ticks(
     )
 
 
+def _collect_due_chainlink_ticks(
+    config: Phase1CaptureConfig,
+    *,
+    logger: logging.Logger,
+    due: bool,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate,
+) -> SourceCaptureResult:
+    result = (
+        _collect_chainlink_ticks(config, logger=logger)
+        if due
+        else _not_due_source_result("chainlink")
+    )
+    return _with_capture_schedule_details(
+        result,
+        source_name="chainlink",
+        config=config,
+        current_ts=current_ts,
+        selected_market=selected_market,
+    )
+
+
 def _collect_exchange_quotes(
     config: Phase1CaptureConfig,
     *,
@@ -1117,6 +1245,28 @@ def _collect_exchange_quotes(
             "venue_statuses": dict(sorted(venue_statuses.items())),
             "captured_venues": sorted(quote.venue_id for quote in normalized_rows),
         },
+    )
+
+
+def _collect_due_exchange_quotes(
+    config: Phase1CaptureConfig,
+    *,
+    logger: logging.Logger,
+    due: bool,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate,
+) -> SourceCaptureResult:
+    result = (
+        _collect_exchange_quotes(config, logger=logger)
+        if due
+        else _not_due_source_result("exchange")
+    )
+    return _with_capture_schedule_details(
+        result,
+        source_name="exchange",
+        config=config,
+        current_ts=current_ts,
+        selected_market=selected_market,
     )
 
 
@@ -1444,6 +1594,52 @@ def _resolve_polymarket_quote_capture(
     )
 
 
+def _resolve_due_polymarket_quote_capture(
+    config: Phase1CaptureConfig,
+    *,
+    metadata_rows: list[MarketMetadataCandidate],
+    admitted_window_ids: dict[str, str],
+    selected_market: MarketMetadataCandidate,
+    selected_window_id: str,
+    current_ts: datetime,
+    prior_consecutive_missing: int,
+    logger: logging.Logger,
+    due: bool,
+) -> PolymarketQuoteResolution:
+    if not due:
+        return PolymarketQuoteResolution(
+            result=_with_capture_schedule_details(
+                _not_due_source_result("polymarket_quotes"),
+                source_name="polymarket_quotes",
+                config=config,
+                current_ts=current_ts,
+                selected_market=selected_market,
+            ),
+            selected_market=selected_market,
+            selected_window_id=selected_window_id,
+        )
+    resolution = _resolve_polymarket_quote_capture(
+        config,
+        metadata_rows=metadata_rows,
+        admitted_window_ids=admitted_window_ids,
+        selected_market=selected_market,
+        selected_window_id=selected_window_id,
+        current_ts=current_ts,
+        prior_consecutive_missing=prior_consecutive_missing,
+        logger=logger,
+    )
+    return replace(
+        resolution,
+        result=_with_capture_schedule_details(
+            resolution.result,
+            source_name="polymarket_quotes",
+            config=config,
+            current_ts=current_ts,
+            selected_market=resolution.selected_market,
+        ),
+    )
+
+
 def _should_refresh_polymarket_binding(
     result: SourceCaptureResult,
     *,
@@ -1551,6 +1747,190 @@ def _polymarket_failure_threshold(
     if within_rollover_grace_window:
         return config.max_consecutive_polymarket_failures_in_grace
     return config.max_consecutive_polymarket_failures
+
+
+def _source_capture_due(
+    config: Phase1CaptureConfig,
+    *,
+    source_name: str,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate,
+    last_capture_monotonic: float | None,
+    now_monotonic: float,
+) -> bool:
+    interval_seconds = _source_capture_interval_seconds(
+        config,
+        source_name=source_name,
+        current_ts=current_ts,
+        selected_market=selected_market,
+    )
+    if interval_seconds <= 0:
+        return last_capture_monotonic is None
+    if last_capture_monotonic is None:
+        return True
+    return (now_monotonic - last_capture_monotonic) >= interval_seconds
+
+
+def _next_capture_sleep_seconds(
+    config: Phase1CaptureConfig,
+    *,
+    now_monotonic: float,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate | None,
+    last_capture_monotonic: dict[str, float | None],
+    deadline: float | None,
+) -> float | None:
+    sleep_candidates: list[float] = []
+    if deadline is not None:
+        remaining_seconds = deadline - now_monotonic
+        if remaining_seconds <= 0:
+            return None
+        sleep_candidates.append(remaining_seconds)
+
+    for source_name in CORE_CAPTURE_SOURCES:
+        interval_seconds = _source_capture_interval_seconds(
+            config,
+            source_name=source_name,
+            current_ts=current_ts,
+            selected_market=selected_market,
+        )
+        last_capture = last_capture_monotonic.get(source_name)
+        if last_capture is None:
+            sleep_candidates.append(0.0)
+            continue
+        sleep_candidates.append(max(0.0, interval_seconds - (now_monotonic - last_capture)))
+
+    transition_seconds = _boundary_burst_transition_seconds(
+        config,
+        current_ts=current_ts,
+        selected_market=selected_market,
+    )
+    if transition_seconds is not None:
+        sleep_candidates.append(transition_seconds)
+
+    if not sleep_candidates:
+        return None
+    return min(sleep_candidates)
+
+
+def _source_capture_interval_seconds(
+    config: Phase1CaptureConfig,
+    *,
+    source_name: str,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate | None,
+) -> float:
+    interval_by_source = {
+        "metadata": max(config.metadata_poll_interval_seconds, 0.0),
+        "chainlink": max(config.chainlink_poll_interval_seconds, 0.0),
+        "exchange": max(config.exchange_poll_interval_seconds, 0.0),
+        "polymarket_quotes": max(config.polymarket_quote_poll_interval_seconds, 0.0),
+    }
+    interval_seconds = interval_by_source[source_name]
+    if (
+        source_name in CORE_CAPTURE_SOURCES
+        and config.boundary_burst_enabled
+        and _boundary_burst_active(
+            config,
+            current_ts=current_ts,
+            selected_market=selected_market,
+        )
+    ):
+        return min(interval_seconds, max(config.boundary_burst_interval_seconds, 0.0))
+    return interval_seconds
+
+
+def _boundary_burst_active(
+    config: Phase1CaptureConfig,
+    *,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate | None,
+) -> bool:
+    if not config.boundary_burst_enabled or selected_market is None:
+        return False
+    burst_window_seconds = max(config.boundary_burst_window_seconds, 0.0)
+    if burst_window_seconds <= 0:
+        return False
+    open_seconds, close_seconds = _boundary_signed_offsets_seconds(
+        selected_market,
+        current_ts=current_ts,
+    )
+    return any(
+        seconds is not None and abs(seconds) <= burst_window_seconds
+        for seconds in (open_seconds, close_seconds)
+    )
+
+
+def _boundary_burst_transition_seconds(
+    config: Phase1CaptureConfig,
+    *,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate | None,
+) -> float | None:
+    if not config.boundary_burst_enabled or selected_market is None:
+        return None
+    burst_window_seconds = max(config.boundary_burst_window_seconds, 0.0)
+    if burst_window_seconds <= 0:
+        return None
+    transition_candidates: list[float] = []
+    for seconds in _boundary_signed_offsets_seconds(selected_market, current_ts=current_ts):
+        if seconds is None:
+            continue
+        if seconds > burst_window_seconds:
+            transition_candidates.append(seconds - burst_window_seconds)
+        elif seconds >= 0:
+            transition_candidates.append(seconds)
+    if not transition_candidates:
+        return None
+    return min(transition_candidates)
+
+
+def _boundary_signed_offsets_seconds(
+    selected_market: MarketMetadataCandidate,
+    *,
+    current_ts: datetime,
+) -> tuple[float | None, float | None]:
+    open_seconds = None
+    close_seconds = None
+    if selected_market.market_open_ts is not None:
+        open_seconds = (selected_market.market_open_ts - current_ts).total_seconds()
+    if selected_market.market_close_ts is not None:
+        close_seconds = (selected_market.market_close_ts - current_ts).total_seconds()
+    return open_seconds, close_seconds
+
+
+def _with_capture_schedule_details(
+    result: SourceCaptureResult,
+    *,
+    source_name: str,
+    config: Phase1CaptureConfig,
+    current_ts: datetime,
+    selected_market: MarketMetadataCandidate,
+) -> SourceCaptureResult:
+    interval_seconds = _source_capture_interval_seconds(
+        config,
+        source_name=source_name,
+        current_ts=current_ts,
+        selected_market=selected_market,
+    )
+    return _with_capture_details(
+        result,
+        capture_interval_seconds=interval_seconds,
+        boundary_burst_active=_boundary_burst_active(
+            config,
+            current_ts=current_ts,
+            selected_market=selected_market,
+        ),
+    )
+
+
+def _not_due_source_result(source_name: str) -> SourceCaptureResult:
+    return SourceCaptureResult(
+        source_name=source_name,
+        status="not_due",
+        raw_rows=(),
+        normalized_rows=(),
+    )
 
 
 def _write_dataset(

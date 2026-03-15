@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from rtds.collectors.phase1_capture import (
+    DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS,
     MetadataSelectionDiagnostics,
     Phase1CaptureConfig,
     SourceCaptureResult,
@@ -15,6 +16,7 @@ from rtds.collectors.phase1_capture import (
     _collect_polymarket_metadata,
     _decode_latest_round_data,
     _run_with_retries,
+    _source_capture_interval_seconds,
     run_phase1_capture,
 )
 from rtds.collectors.polymarket.metadata import RawMetadataMessage, normalize_market_payload
@@ -241,7 +243,7 @@ def test_run_phase1_capture_repeats_samples_for_bounded_session(
 
     assert result.sample_count == 3
     assert sleep_calls == [60.0, 59.0]
-    assert result.collectors[0].normalized_row_count == 1
+    assert result.collectors[0].normalized_row_count == 3
     assert result.collectors[1].normalized_row_count == 3
     assert result.collectors[2].normalized_row_count == 9
     assert result.collectors[3].normalized_row_count == 3
@@ -623,6 +625,48 @@ def test_run_phase1_capture_refreshes_polymarket_binding_on_rollover_404(
     assert polymarket_diag["details"]["metadata_refresh_attempted"] is True
     assert polymarket_diag["details"]["metadata_refresh_changed_binding"] is True
     assert diagnostics_row["selected_market_id"] == next_candidate.market_id
+
+
+def test_source_capture_interval_uses_boundary_burst_for_core_sources() -> None:
+    active_candidate = replace(
+        _metadata_candidate(),
+        market_open_ts=datetime(2026, 3, 15, 5, 15, 0, tzinfo=UTC),
+        market_close_ts=datetime(2026, 3, 15, 5, 20, 0, tzinfo=UTC),
+    )
+
+    config = Phase1CaptureConfig(
+        data_root=Path("data"),
+        artifacts_root=Path("artifacts"),
+        logs_root=Path("logs"),
+        temp_root=Path("tmp"),
+        session_id="test-session",
+        metadata_poll_interval_seconds=60.0,
+        chainlink_poll_interval_seconds=60.0,
+        exchange_poll_interval_seconds=60.0,
+        polymarket_quote_poll_interval_seconds=60.0,
+        boundary_burst_enabled=True,
+        boundary_burst_window_seconds=15.0,
+        boundary_burst_interval_seconds=DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS,
+    )
+
+    assert (
+        _source_capture_interval_seconds(
+            config,
+            source_name="chainlink",
+            current_ts=datetime(2026, 3, 15, 5, 14, 50, tzinfo=UTC),
+            selected_market=active_candidate,
+        )
+        == 1.0
+    )
+    assert (
+        _source_capture_interval_seconds(
+            config,
+            source_name="metadata",
+            current_ts=datetime(2026, 3, 15, 5, 14, 50, tzinfo=UTC),
+            selected_market=active_candidate,
+        )
+        == 60.0
+    )
 
 
 def test_run_phase1_capture_stops_when_polymarket_market_is_invalid_after_refresh(

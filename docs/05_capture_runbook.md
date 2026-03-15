@@ -15,7 +15,13 @@ What it runs:
 - Kraken XBT/USD quote collector
 - Polymarket quote collector for the selected BTC market
 
-By default this is a one-shot capture pass, not a daemon. For live smoke testing, the same sanctioned entrypoint can run as a bounded polling session.
+By default this is a one-shot capture pass, not a daemon. For bounded live work, the same sanctioned entrypoint now supports three operating profiles:
+
+- `smoke`: coarse operational sanity checks
+- `pilot`: denser replay-admission validation
+- `admission`: same dense cadence profile intended for longer candidate-day work
+
+The `pilot` and `admission` presets also widen sample-based failure thresholds for Chainlink, exchange, and Polymarket so 1-second sampling does not abort on a few seconds of transient loss.
 
 ## Deviation note
 
@@ -46,13 +52,33 @@ Optional tuning:
 10-minute smoke test:
 
 ```bash
-./scripts/run_collectors.sh --duration-seconds 600 --poll-interval-seconds 60
+./scripts/run_collectors.sh --capture-mode smoke --duration-seconds 600
+```
+
+20-minute boundary validation:
+
+```bash
+./scripts/run_collectors.sh --capture-mode pilot --duration-seconds 1200
 ```
 
 2-hour pilot in `tmux`:
 
 ```bash
-tmux new-session -d -s phaseb_pilot './scripts/run_collectors.sh --duration-seconds 7200 --poll-interval-seconds 60'
+tmux new-session -d -s phaseb_pilot './scripts/run_collectors.sh --capture-mode pilot --duration-seconds 7200'
+```
+
+Optional per-source cadence override:
+
+```bash
+./scripts/run_collectors.sh \
+  --capture-mode pilot \
+  --metadata-poll-interval-seconds 30 \
+  --chainlink-poll-interval-seconds 1 \
+  --exchange-poll-interval-seconds 1 \
+  --polymarket-quote-poll-interval-seconds 1 \
+  --boundary-burst-enabled \
+  --boundary-burst-window-seconds 15 \
+  --boundary-burst-interval-seconds 1
 ```
 
 Optional resilience tuning:
@@ -105,6 +131,7 @@ Healthy collectors produce log lines showing:
 - one or more Chainlink rounds captured
 - Binance, Coinbase, and Kraken quote snapshots captured on each sample
 - one or more Polymarket quotes captured for the currently selected admitted family market
+- capture-schedule details showing effective per-source interval and whether boundary burst mode is active for quote/oracle samples
 - retry warnings only when a source is recovering, not on every sample
 - degraded samples are logged explicitly when one source is temporarily impaired
 - Polymarket 404s near rollover trigger metadata refresh and selector re-evaluation before the session treats the binding as invalid
@@ -154,6 +181,7 @@ For a hardened pilot, also confirm:
 - `session_diagnostics.termination_reason` is `completed`
 - `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
 - `admission_summary.json` reports family-compliance counts and off-family switch count from the final selected market/window binding per sample, while metadata-strip breadth and ambiguity are reported separately from family drift; it also includes degraded samples inside/outside rollover grace, Chainlink continuity, exchange venue continuity, mapped window count, open-anchor confidence breakdown, and `snapshot_eligible_sample_count`
+- `sample_diagnostics.jsonl` shows 1-second effective `capture_interval_seconds` for `chainlink`, `exchange`, and `polymarket_quotes` during pilot/admission mode, with `boundary_burst_active` toggling near 5-minute boundaries
 - any `degraded_empty_book` sample does not terminate the session by itself
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder
