@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from rtds.collectors.phase1_capture import Phase1CaptureResult
+from rtds.collectors.polymarket.metadata import MarketMetadataCandidate
+from rtds.core.enums import AssetCode, ConfidenceLevel
+from rtds.core.ids import build_window_id
 from rtds.core.time import parse_utc
 from rtds.mapping.anchor_assignment import assign_window_references
-from rtds.mapping.market_mapper import RECURRING_5M_SLUG_PATTERN, map_candidates_to_windows
+from rtds.mapping.market_mapper import RECURRING_5M_SLUG_PATTERN, WindowMarketMappingRecord
 from rtds.mapping.window_ids import daily_window_schedule, owning_window_id
 from rtds.replay.loader import _row_to_chainlink_tick, _row_to_metadata_candidate
 from rtds.storage.writer import write_json_file
@@ -22,6 +27,26 @@ ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.90
 CONDITIONALLY_ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.60
 ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 1
 CONDITIONALLY_ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 3
+
+
+@dataclass(slots=True, frozen=True)
+class MetadataStripDiagnostics:
+    """Selector-adjacent metadata breadth and ambiguity diagnostics."""
+
+    target_family_candidate_row_count: int
+    target_family_unique_market_count: int
+    target_family_window_count: int
+    ambiguous_window_count: int
+    ambiguous_but_resolved_window_count: int
+
+
+@dataclass(slots=True, frozen=True)
+class SelectedWindowBindings:
+    """Final per-window selected bindings resolved from sample diagnostics."""
+
+    records: list[WindowMarketMappingRecord]
+    observed_window_ids: list[str]
+    unresolved_window_ids: list[str]
 
 
 def write_capture_admission_summary(result: Phase1CaptureResult) -> Path:
@@ -41,37 +66,22 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
     metadata_rows = _load_metadata_candidates(_collector_path(result, "polymarket_metadata"))
     chainlink_ticks = _load_chainlink_ticks(_collector_path(result, "chainlink"))
 
-    mappings = map_candidates_to_windows(
-        daily_window_schedule(result.capture_date),
+    selected_bindings = _resolve_selected_window_bindings(
+        sample_rows,
+        metadata_rows=metadata_rows,
+        capture_date=result.capture_date,
+    )
+    metadata_strip = _summarize_metadata_strip(
         metadata_rows,
+        resolved_window_ids=set(record.window_id for record in selected_bindings.records),
     )
-    mapping_by_window_id = {record.window_id: record for record in mappings.records}
-    observed_window_ids = sorted(
-        {
-            str(row["selected_window_id"])
-            for row in sample_rows
-            if row.get("selected_window_id") is not None
-        }
-    )
-    observed_mapping_records = [
-        mapping_by_window_id[window_id]
-        for window_id in observed_window_ids
-        if window_id in mapping_by_window_id
-    ]
-    mapped_records = [
-        record for record in observed_mapping_records if record.mapping_status == "mapped"
-    ]
     reference_by_window_id = {
         reference.window_id: reference
-        for reference in assign_window_references(mapped_records, chainlink_ticks)
+        for reference in assign_window_references(selected_bindings.records, chainlink_ticks)
     }
 
     family_compliance_flags = [
-        _sample_is_family_compliant(
-            sample_row,
-            mapping_by_window_id=mapping_by_window_id,
-        )
-        for sample_row in sample_rows
+        _sample_is_family_compliant(sample_row) for sample_row in sample_rows
     ]
     family_compliance_count = sum(family_compliance_flags)
     off_family_switch_count = sum(
@@ -97,12 +107,12 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
 
     anchor_confidence_breakdown: Counter[str] = Counter()
     anchor_confidence_by_window_id: dict[str, str] = {}
-    for window_id in observed_window_ids:
+    for window_id in selected_bindings.observed_window_ids:
         reference = reference_by_window_id.get(window_id)
         confidence = (
             reference.chainlink_open_anchor_confidence
             if reference is not None
-            else "none"
+            else ConfidenceLevel.NONE.value
         )
         anchor_confidence_breakdown[confidence] += 1
         anchor_confidence_by_window_id[window_id] = confidence
@@ -229,6 +239,17 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
             "selector_rejected_count_by_reason": dict(
                 sorted(result.selector_diagnostics.rejected_count_by_reason.items())
             ),
+            "target_family_metadata_candidate_row_count": (
+                metadata_strip.target_family_candidate_row_count
+            ),
+            "target_family_metadata_unique_market_count": (
+                metadata_strip.target_family_unique_market_count
+            ),
+            "target_family_metadata_window_count": metadata_strip.target_family_window_count,
+            "selector_ambiguity_window_count": metadata_strip.ambiguous_window_count,
+            "selector_ambiguity_resolved_window_count": (
+                metadata_strip.ambiguous_but_resolved_window_count
+            ),
         },
         "polymarket_continuity": {
             "failure_count_by_class": dict(
@@ -269,9 +290,10 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
             },
         },
         "mapping_and_anchor": {
-            "observed_window_count": len(observed_window_ids),
-            "mapped_window_count": sum(
-                1 for record in observed_mapping_records if record.mapping_status == "mapped"
+            "observed_window_count": len(selected_bindings.observed_window_ids),
+            "mapped_window_count": len(selected_bindings.records),
+            "selected_binding_unresolved_window_count": len(
+                selected_bindings.unresolved_window_ids
             ),
             "anchor_assignment_confidence_breakdown": dict(
                 sorted(anchor_confidence_breakdown.items())
@@ -342,8 +364,6 @@ def _classify_admission_verdict(
 
 def _sample_is_family_compliant(
     sample_row: dict[str, Any],
-    *,
-    mapping_by_window_id: dict[str, Any],
 ) -> bool:
     selected_market_id = sample_row.get("selected_market_id")
     selected_market_slug = sample_row.get("selected_market_slug")
@@ -359,14 +379,150 @@ def _sample_is_family_compliant(
         return False
     if RECURRING_5M_SLUG_PATTERN.fullmatch(str(selected_market_slug).strip().lower()) is None:
         return False
-    if str(owning_window_id(parse_utc(str(sample_started_at)))) != str(selected_window_id):
-        return False
-    mapping_record = mapping_by_window_id.get(str(selected_window_id))
-    return bool(
-        mapping_record is not None
-        and mapping_record.mapping_status == "mapped"
-        and mapping_record.polymarket_market_id == selected_market_id
+    return str(owning_window_id(parse_utc(str(sample_started_at)))) == str(selected_window_id)
+
+
+def _resolve_selected_window_bindings(
+    sample_rows: list[dict[str, Any]],
+    *,
+    metadata_rows: list[MarketMetadataCandidate],
+    capture_date: Any,
+) -> SelectedWindowBindings:
+    schedule_by_window_id = {
+        window.window_id: window for window in daily_window_schedule(capture_date)
+    }
+    metadata_by_market_id = _latest_metadata_by_market_id(metadata_rows)
+    observed_window_ids = sorted(
+        {
+            str(row["selected_window_id"])
+            for row in sample_rows
+            if row.get("selected_window_id") is not None
+        }
     )
+
+    states_by_window_id: dict[str, dict[tuple[str, str | None], dict[str, Any]]] = {}
+    for sample_row in sample_rows:
+        selected_window_id = sample_row.get("selected_window_id")
+        selected_market_id = sample_row.get("selected_market_id")
+        if selected_window_id is None or selected_market_id is None:
+            continue
+        window_id = str(selected_window_id)
+        states_by_window_id.setdefault(window_id, {})[
+            (str(selected_market_id), _optional_str(sample_row.get("selected_market_slug")))
+        ] = sample_row
+
+    records: list[WindowMarketMappingRecord] = []
+    unresolved_window_ids: list[str] = []
+    created_ts = datetime.now(UTC)
+    for window_id in observed_window_ids:
+        window = schedule_by_window_id.get(window_id)
+        states = states_by_window_id.get(window_id, {})
+        if window is None or len(states) != 1:
+            unresolved_window_ids.append(window_id)
+            continue
+        state = next(iter(states.values()))
+        selected_market_id = str(state["selected_market_id"])
+        metadata = metadata_by_market_id.get(selected_market_id)
+        records.append(
+            WindowMarketMappingRecord(
+                window_id=window.window_id,
+                asset_id=AssetCode.BTC.value,
+                window_start_ts=window.window_start_ts,
+                window_end_ts=window.window_end_ts,
+                polymarket_market_id=selected_market_id,
+                polymarket_event_id=metadata.event_id if metadata is not None else None,
+                polymarket_slug=_optional_str(state.get("selected_market_slug"))
+                or (metadata.market_slug if metadata is not None else None),
+                clob_token_id_up=metadata.token_yes_id if metadata is not None else None,
+                clob_token_id_down=metadata.token_no_id if metadata is not None else None,
+                listing_discovered_ts=metadata.recv_ts if metadata is not None else None,
+                market_active_flag=metadata.active_flag if metadata is not None else None,
+                market_closed_flag=metadata.closed_flag if metadata is not None else None,
+                mapping_status="mapped",
+                mapping_confidence=ConfidenceLevel.HIGH.value,
+                mapping_method="selected_sample_binding",
+                notes=None,
+                schema_version="0.1.0",
+                normalizer_version="0.1.0",
+                mapping_version="0.1.0",
+                created_ts=created_ts,
+                updated_ts=created_ts,
+            )
+        )
+    return SelectedWindowBindings(
+        records=records,
+        observed_window_ids=observed_window_ids,
+        unresolved_window_ids=unresolved_window_ids,
+    )
+
+
+def _summarize_metadata_strip(
+    metadata_rows: list[MarketMetadataCandidate],
+    *,
+    resolved_window_ids: set[str],
+) -> MetadataStripDiagnostics:
+    market_ids_by_window_id: dict[str, set[str]] = {}
+    target_family_candidate_row_count = 0
+    target_family_unique_market_ids: set[str] = set()
+    for candidate in metadata_rows:
+        window_id = _target_family_window_id(candidate)
+        if window_id is None:
+            continue
+        target_family_candidate_row_count += 1
+        target_family_unique_market_ids.add(candidate.market_id)
+        market_ids_by_window_id.setdefault(window_id, set()).add(candidate.market_id)
+
+    ambiguous_window_ids = {
+        window_id
+        for window_id, market_ids in market_ids_by_window_id.items()
+        if len(market_ids) > 1
+    }
+    return MetadataStripDiagnostics(
+        target_family_candidate_row_count=target_family_candidate_row_count,
+        target_family_unique_market_count=len(target_family_unique_market_ids),
+        target_family_window_count=len(market_ids_by_window_id),
+        ambiguous_window_count=len(ambiguous_window_ids),
+        ambiguous_but_resolved_window_count=len(ambiguous_window_ids & resolved_window_ids),
+    )
+
+
+def _latest_metadata_by_market_id(
+    metadata_rows: list[MarketMetadataCandidate],
+) -> dict[str, MarketMetadataCandidate]:
+    latest_by_market_id: dict[str, MarketMetadataCandidate] = {}
+    for candidate in metadata_rows:
+        existing = latest_by_market_id.get(candidate.market_id)
+        if existing is None or candidate.recv_ts >= existing.recv_ts:
+            latest_by_market_id[candidate.market_id] = candidate
+    return latest_by_market_id
+
+
+def _target_family_window_id(candidate: MarketMetadataCandidate) -> str | None:
+    slug = (candidate.market_slug or "").strip().lower()
+    if (
+        candidate.asset_id != AssetCode.BTC.value
+        or RECURRING_5M_SLUG_PATTERN.fullmatch(slug) is None
+        or candidate.token_yes_id is None
+        or candidate.token_no_id is None
+        or candidate.token_yes_id == candidate.token_no_id
+    ):
+        return None
+    match = RECURRING_5M_SLUG_PATTERN.fullmatch(slug)
+    if match is None:
+        return None
+    return str(
+        build_window_id(
+            AssetCode.BTC,
+            datetime.fromtimestamp(int(match.group("window_start_epoch")), tz=UTC),
+        )
+    )
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _collector_path(result: Phase1CaptureResult, collector_name: str) -> Path:

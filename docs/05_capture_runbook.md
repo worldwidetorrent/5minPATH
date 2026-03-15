@@ -153,7 +153,7 @@ For a hardened pilot, also confirm:
 
 - `session_diagnostics.termination_reason` is `completed`
 - `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
-- `admission_summary.json` reports family-compliance counts, off-family switch count, degraded samples inside/outside rollover grace, Chainlink continuity, exchange venue continuity, mapped window count, open-anchor confidence breakdown, and `snapshot_eligible_sample_count`
+- `admission_summary.json` reports family-compliance counts and off-family switch count from the final selected market/window binding per sample, while metadata-strip breadth and ambiguity are reported separately from family drift; it also includes degraded samples inside/outside rollover grace, Chainlink continuity, exchange venue continuity, mapped window count, open-anchor confidence breakdown, and `snapshot_eligible_sample_count`
 - any `degraded_empty_book` sample does not terminate the session by itself
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder

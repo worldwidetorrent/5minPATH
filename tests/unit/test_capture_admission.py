@@ -35,6 +35,7 @@ def test_build_capture_admission_summary_reports_conditional_admission(tmp_path:
     assert summary["polymarket_continuity"]["degraded_samples_inside_rollover_grace_window"] == 1
     assert summary["polymarket_continuity"]["degraded_samples_outside_rollover_grace_window"] == 0
     assert summary["mapping_and_anchor"]["mapped_window_count"] == 3
+    assert summary["mapping_and_anchor"]["selected_binding_unresolved_window_count"] == 0
     assert summary["mapping_and_anchor"]["anchor_assignment_confidence_breakdown"] == {
         "high": 3
     }
@@ -50,7 +51,26 @@ def test_build_capture_admission_summary_flags_off_family_switches(tmp_path: Pat
     assert summary["family_validation"]["off_family_switch_count"] == 1
 
 
-def _capture_result(tmp_path: Path, *, off_family_last_sample: bool = False) -> Phase1CaptureResult:
+def test_build_capture_admission_summary_keeps_refresh_duplicates_out_of_off_family(
+    tmp_path: Path,
+) -> None:
+    result = _capture_result(tmp_path, metadata_conflict_same_window=True)
+
+    summary = build_capture_admission_summary(result)
+
+    assert summary["verdict"] == "conditionally_admissible"
+    assert summary["family_validation"]["off_family_switch_count"] == 0
+    assert summary["selector_diagnostics"]["selector_ambiguity_window_count"] == 1
+    assert summary["selector_diagnostics"]["selector_ambiguity_resolved_window_count"] == 1
+    assert summary["mapping_and_anchor"]["mapped_window_count"] == 3
+
+
+def _capture_result(
+    tmp_path: Path,
+    *,
+    off_family_last_sample: bool = False,
+    metadata_conflict_same_window: bool = False,
+) -> Phase1CaptureResult:
     capture_date = date(2026, 3, 15)
     metadata_path = tmp_path / "data" / "normalized" / "market_metadata_events" / "part-00000.jsonl"
     chainlink_path = tmp_path / "data" / "normalized" / "chainlink_ticks" / "part-00000.jsonl"
@@ -72,7 +92,19 @@ def _capture_result(tmp_path: Path, *, off_family_last_sample: bool = False) -> 
         slug="btc-updown-5m-1773582000",
         start_ts=datetime(2026, 3, 15, 13, 40, tzinfo=UTC),
     )
-    write_jsonl_rows(metadata_path, [market_one, market_two, market_three])
+    metadata_rows = [market_one, market_two, market_three]
+    if metadata_conflict_same_window:
+        metadata_rows.extend(
+            [
+                _metadata_candidate(
+                    market_id="0x" + "9" * 64,
+                    slug=market_two.market_slug,
+                    start_ts=datetime(2026, 3, 15, 13, 35, tzinfo=UTC),
+                ),
+                market_two,
+            ]
+        )
+    write_jsonl_rows(metadata_path, metadata_rows)
     write_jsonl_rows(
         chainlink_path,
         [
