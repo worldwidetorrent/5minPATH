@@ -8,6 +8,7 @@ from pathlib import Path
 from rtds.collectors.phase1_capture import (
     MetadataSelectionDiagnostics,
     Phase1CaptureConfig,
+    SourceCaptureResult,
     run_phase1_capture,
 )
 from rtds.collectors.polymarket.metadata import RawMetadataMessage, normalize_market_payload
@@ -108,32 +109,41 @@ def test_phase1_capture_writes_frozen_raw_and_normalized_layouts(
     )
     monkeypatch.setattr(
         "rtds.collectors.phase1_capture._collect_chainlink_ticks",
-        lambda config, logger: (
-            [
+        lambda config, logger: SourceCaptureResult(
+            source_name="chainlink",
+            status="success",
+            raw_rows=(
                 {
                     "raw_event_id": "chainlink:round:1",
                     "source_type": "evm_rpc_latest_round_data",
                 }
-            ],
-            [chainlink_tick],
+            ),
+            normalized_rows=(chainlink_tick,),
         ),
     )
     monkeypatch.setattr(
         "rtds.collectors.phase1_capture._collect_exchange_quotes",
-        lambda config, logger: (
-            [
+        lambda config, logger: SourceCaptureResult(
+            source_name="exchange",
+            status="success",
+            raw_rows=(
                 {"raw_event_id": binance_quote.raw_event_id, "venue_id": "binance"},
                 {"raw_event_id": coinbase_quote.raw_event_id, "venue_id": "coinbase"},
                 {"raw_event_id": kraken_quote.raw_event_id, "venue_id": "kraken"},
-            ],
-            [binance_quote, coinbase_quote, kraken_quote],
+            ),
+            normalized_rows=(binance_quote, coinbase_quote, kraken_quote),
         ),
     )
     monkeypatch.setattr(
         "rtds.collectors.phase1_capture._collect_polymarket_quote",
-        lambda config, selected_market, logger: (
-            [{"raw_event_id": polymarket_quote.raw_event_id, "venue_id": "polymarket"}],
-            [polymarket_quote],
+        lambda config, selected_market, selected_window_id, logger: SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status="success",
+            raw_rows=(
+                {"raw_event_id": polymarket_quote.raw_event_id, "venue_id": "polymarket"},
+            ),
+            normalized_rows=(polymarket_quote,),
+            details={"selected_window_id": selected_window_id},
         ),
     )
 
@@ -149,6 +159,7 @@ def test_phase1_capture_writes_frozen_raw_and_normalized_layouts(
 
     assert result.summary_path.exists()
     assert result.selected_window_id == "btc-5m-20260313T120500Z"
+    assert result.session_diagnostics.termination_reason == "completed"
     assert (
         tmp_path
         / "data"

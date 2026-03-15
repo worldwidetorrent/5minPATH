@@ -25,6 +25,7 @@ The original architecture still aims at source-faithful, continuously running co
 - it uses public REST and RPC endpoints instead of the eventual websocket / RTDS-first stack
 - Polymarket metadata currently comes from the `up-or-down` event feed because that surface exposes the recurring BTC 5-minute family densely enough to select the exact target strip
 - it persists the minimum real raw and normalized datasets needed to unblock replay-day admission work
+- it now hardens the bounded acquisition path with retry/backoff, degraded-sample tracking, and threshold-based early termination because rollover-safe capture failed without that resilience layer
 
 This deviation is deliberate. The immediate requirement is to prove the repo can produce real persisted files under the frozen layout without committing captured data or broadening the module surface prematurely.
 
@@ -48,15 +49,33 @@ Optional tuning:
 ./scripts/run_collectors.sh --duration-seconds 600 --poll-interval-seconds 60
 ```
 
+2-hour pilot in `tmux`:
+
+```bash
+tmux new-session -d -s phaseb_pilot './scripts/run_collectors.sh --duration-seconds 7200 --poll-interval-seconds 60'
+```
+
+Optional resilience tuning:
+
+```bash
+./scripts/run_collectors.sh \
+  --max-fetch-retries 3 \
+  --base-backoff-seconds 0.5 \
+  --max-backoff-seconds 5 \
+  --max-consecutive-polymarket-failures 3
+```
+
 ## Stop
 
 - Normal operation: the command exits on its own after the configured pass or bounded session.
 - If it hangs: press `Ctrl-C`.
+- If running in `tmux`: `tmux kill-session -t phaseb_pilot`
 
 ## Logs
 
 - Log file: `logs/collect_<session>.log`
 - Summary artifact: `artifacts/collect/date=YYYY-MM-DD/session=<session>/summary.json`
+- Per-sample diagnostics: `artifacts/collect/date=YYYY-MM-DD/session=<session>/sample_diagnostics.jsonl`
 
 ## Output layout
 
@@ -83,6 +102,8 @@ Healthy collectors produce log lines showing:
 - one or more Chainlink rounds captured
 - Binance, Coinbase, and Kraken quote snapshots captured on each sample
 - one or more Polymarket quotes captured for the currently selected admitted family market
+- retry warnings only when a source is recovering, not on every sample
+- degraded samples are logged explicitly when one source is temporarily impaired
 - one summary artifact path
 
 Non-empty output means:
@@ -116,7 +137,14 @@ For a smoke session, confirm:
 - `sample_count` is greater than `1`
 - `selector_diagnostics.candidate_count`, `admitted_count`, and `rejected_count_by_reason` are present in the summary artifact
 - `selector_diagnostics.selected_window_id` is a canonical `btc-5m-...` window
+- `session_diagnostics.empty_book_count`, `retry_count_by_source`, `retry_exhaustion_count_by_source`, and `termination_reason` are present in the summary artifact
 - `data/raw/chainlink/...` has non-empty rows with stamped `recv_ts`
 - `data/normalized/exchange_quotes/...` contains non-empty `binance`, `coinbase`, and `kraken` rows
 - `data/normalized/market_metadata_events/...` contains only admitted target-family rows, with slugs like `btc-updown-5m-<epoch>`
 - `data/normalized/polymarket_quotes/...` market IDs stay inside the admitted target-family strip even if they roll across multiple 5-minute windows during the session
+
+For a hardened pilot, also confirm:
+
+- `session_diagnostics.termination_reason` is `completed`
+- `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
+- any `degraded_empty_book` sample does not terminate the session by itself

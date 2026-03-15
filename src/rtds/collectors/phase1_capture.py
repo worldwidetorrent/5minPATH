@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import random
+import socket
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -45,6 +48,13 @@ DEFAULT_METADATA_LIMIT = 500
 DEFAULT_METADATA_PAGES = 1
 DEFAULT_DURATION_SECONDS = 0.0
 DEFAULT_POLL_INTERVAL_SECONDS = 60.0
+DEFAULT_MAX_FETCH_RETRIES = 2
+DEFAULT_BASE_BACKOFF_SECONDS = 0.5
+DEFAULT_MAX_BACKOFF_SECONDS = 5.0
+DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES = 3
+DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES = 3
+DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES = 3
+DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES = 3
 DEFAULT_CHAINLINK_RPC_URL = "https://arb1.arbitrum.io/rpc"
 DEFAULT_CHAINLINK_PROXY_ADDRESS = "0x6ce185860a4963106506C203335A2910413708e9"
 DEFAULT_CHAINLINK_FEED_PAGE_URL = "https://data.chain.link/feeds/arbitrum/mainnet/btc-usd"
@@ -54,6 +64,8 @@ DEFAULT_KRAKEN_BOOK_URL = "https://api.kraken.com/0/public/Depth?pair=XBTUSD&cou
 DEFAULT_POLYMARKET_BOOK_URL = "https://clob.polymarket.com/book?token_id={token_id}"
 PART_FILE_NAME = "part-00000.jsonl"
 USER_AGENT = "testingproject-rtds/0.1.0"
+RETRYABLE_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+T = TypeVar("T")
 
 
 @dataclass(slots=True, frozen=True)
@@ -71,6 +83,13 @@ class Phase1CaptureConfig:
     metadata_pages: int = DEFAULT_METADATA_PAGES
     duration_seconds: float = DEFAULT_DURATION_SECONDS
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
+    max_fetch_retries: int = DEFAULT_MAX_FETCH_RETRIES
+    base_backoff_seconds: float = DEFAULT_BASE_BACKOFF_SECONDS
+    max_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
+    max_consecutive_selection_failures: int = DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES
+    max_consecutive_chainlink_failures: int = DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES
+    max_consecutive_exchange_failures: int = DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES
+    max_consecutive_polymarket_failures: int = DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES
     chainlink_rpc_url: str = DEFAULT_CHAINLINK_RPC_URL
     chainlink_proxy_address: str = DEFAULT_CHAINLINK_PROXY_ADDRESS
     chainlink_feed_page_url: str = DEFAULT_CHAINLINK_FEED_PAGE_URL
@@ -114,6 +133,112 @@ class MetadataSelectionDiagnostics:
 
 
 @dataclass(slots=True, frozen=True)
+class FetchResult:
+    """Outcome of one outbound fetch with bounded retry handling."""
+
+    status: str
+    payload: Any | None
+    attempts: int
+    retries: int
+    failure_type: str | None = None
+    failure_message: str | None = None
+    http_status: int | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class SourceCaptureResult:
+    """One source collector result for a single sample."""
+
+    source_name: str
+    status: str
+    raw_rows: tuple[dict[str, object], ...]
+    normalized_rows: tuple[object, ...]
+    retries: int = 0
+    failure_type: str | None = None
+    failure_message: str | None = None
+    details: dict[str, object] = field(default_factory=dict)
+
+    def to_summary_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "retries": self.retries,
+            "raw_row_count": len(self.raw_rows),
+            "normalized_row_count": len(self.normalized_rows),
+            "failure_type": self.failure_type,
+            "failure_message": self.failure_message,
+            "details": dict(self.details),
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class SampleDiagnostics:
+    """Per-sample health and degradation state."""
+
+    sample_index: int
+    sample_started_at: datetime
+    sample_status: str
+    selected_market_id: str | None
+    selected_market_slug: str | None
+    selected_window_id: str | None
+    family_validation_status: str
+    degraded_sources: tuple[str, ...]
+    source_results: dict[str, SourceCaptureResult]
+    termination_reason: str | None = None
+
+    def to_summary_dict(self) -> dict[str, object]:
+        return {
+            "sample_index": self.sample_index,
+            "sample_started_at": format_utc(self.sample_started_at, timespec="milliseconds"),
+            "sample_status": self.sample_status,
+            "selected_market_id": self.selected_market_id,
+            "selected_market_slug": self.selected_market_slug,
+            "selected_window_id": self.selected_window_id,
+            "family_validation_status": self.family_validation_status,
+            "degraded_sources": list(self.degraded_sources),
+            "source_results": {
+                source_name: result.to_summary_dict()
+                for source_name, result in sorted(self.source_results.items())
+            },
+            "termination_reason": self.termination_reason,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class SessionDiagnostics:
+    """Aggregated session-level resilience diagnostics."""
+
+    degraded_sample_count: int
+    failed_sample_count: int
+    empty_book_count: int
+    retry_count_by_source: dict[str, int]
+    retry_exhaustion_count_by_source: dict[str, int]
+    source_failure_count_by_source: dict[str, int]
+    max_consecutive_missing_by_source: dict[str, int]
+    termination_reason: str
+    sample_diagnostics_path: Path
+
+    def to_summary_dict(self) -> dict[str, object]:
+        return {
+            "degraded_sample_count": self.degraded_sample_count,
+            "failed_sample_count": self.failed_sample_count,
+            "empty_book_count": self.empty_book_count,
+            "retry_count_by_source": dict(sorted(self.retry_count_by_source.items())),
+            "retry_exhaustion_count_by_source": dict(
+                sorted(self.retry_exhaustion_count_by_source.items())
+            ),
+            "source_failure_count_by_source": dict(
+                sorted(self.source_failure_count_by_source.items())
+            ),
+            "max_consecutive_missing_by_source": dict(
+                sorted(self.max_consecutive_missing_by_source.items())
+            ),
+            "termination_reason": self.termination_reason,
+            "sample_diagnostics_path": str(self.sample_diagnostics_path),
+        }
+
+
+@dataclass(slots=True, frozen=True)
 class Phase1CaptureResult:
     """Persisted output summary for one capture session."""
 
@@ -127,6 +252,7 @@ class Phase1CaptureResult:
     duration_seconds: float
     poll_interval_seconds: float
     sample_count: int
+    session_diagnostics: SessionDiagnostics
     summary_path: Path
     collectors: tuple[CollectorArtifactSet, ...]
 
@@ -142,6 +268,7 @@ class Phase1CaptureResult:
             "duration_seconds": self.duration_seconds,
             "poll_interval_seconds": self.poll_interval_seconds,
             "sample_count": self.sample_count,
+            "session_diagnostics": self.session_diagnostics.to_summary_dict(),
             "collectors": [
                 {
                     "collector_name": collector.collector_name,
@@ -171,47 +298,184 @@ def run_phase1_capture(
         logger=logger,
         )
     )
+    _, admitted_window_ids, _ = _admitted_family_candidates(metadata_rows)
     chainlink_raw: list[dict[str, object]] = []
     chainlink_rows: list[ChainlinkTick] = []
     exchange_raw: list[dict[str, object]] = []
     exchange_rows: list[ExchangeQuote] = []
     polymarket_raw: list[dict[str, object]] = []
     polymarket_rows: list[PolymarketQuote] = []
+    sample_diagnostics_rows: list[dict[str, object]] = []
 
     duration_seconds = max(config.duration_seconds, 0.0)
     poll_interval_seconds = max(config.poll_interval_seconds, 0.0)
     deadline = time.monotonic() + duration_seconds if duration_seconds > 0 else None
     sample_count = 0
+    degraded_sample_count = 0
+    failed_sample_count = 0
+    empty_book_count = 0
+    retry_count_by_source: Counter[str] = Counter()
+    retry_exhaustion_count_by_source: Counter[str] = Counter()
+    source_failure_count_by_source: Counter[str] = Counter()
+    consecutive_missing_by_source: Counter[str] = Counter()
+    max_consecutive_missing_by_source: Counter[str] = Counter()
+    termination_reason = "completed"
 
     while True:
         sample_count += 1
         logger.info("starting capture sample %s", sample_count)
-        sample_market = _select_market_for_current_time(metadata_rows, current_ts=datetime.now(UTC))
+        sample_started_at = datetime.now(UTC)
+        sample_market: MarketMetadataCandidate | None = None
+        selected_window_id: str | None = None
+        family_validation_status = "selected"
+        source_results: dict[str, SourceCaptureResult] = {}
+
+        try:
+            sample_market = _select_market_for_current_time(
+                metadata_rows,
+                current_ts=sample_started_at,
+            )
+            selected_window_id = admitted_window_ids[sample_market.market_id]
+            consecutive_missing_by_source["selection"] = 0
+        except Exception as exc:
+            family_validation_status = "selection_failed"
+            consecutive_missing_by_source["selection"] += 1
+            max_consecutive_missing_by_source["selection"] = max(
+                max_consecutive_missing_by_source["selection"],
+                consecutive_missing_by_source["selection"],
+            )
+            logger.warning("sample %s could not select an admitted market: %s", sample_count, exc)
+            if (
+                consecutive_missing_by_source["selection"]
+                >= config.max_consecutive_selection_failures
+            ):
+                termination_reason = "selection_failure_threshold_exceeded"
+            sample_result = SampleDiagnostics(
+                sample_index=sample_count,
+                sample_started_at=sample_started_at,
+                sample_status="failed",
+                selected_market_id=None,
+                selected_market_slug=None,
+                selected_window_id=None,
+                family_validation_status=family_validation_status,
+                degraded_sources=(),
+                source_results={},
+                termination_reason=(
+                    termination_reason if termination_reason != "completed" else None
+                ),
+            )
+            failed_sample_count += 1
+            sample_diagnostics_rows.append(sample_result.to_summary_dict())
+            if termination_reason != "completed":
+                break
+            if deadline is None or poll_interval_seconds <= 0:
+                break
+            remaining_seconds = deadline - time.monotonic() if deadline is not None else 0.0
+            if remaining_seconds <= 0:
+                break
+            sleep_seconds = min(poll_interval_seconds, remaining_seconds)
+            logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
+            time.sleep(sleep_seconds)
+            continue
+
         if sample_market.market_id != selected_market.market_id:
             logger.info(
-                "rolling Polymarket sample market to %s slug=%s",
+                "rolling Polymarket sample market to %s slug=%s window_id=%s",
                 sample_market.market_id,
                 sample_market.market_slug or "unknown",
+                selected_window_id,
             )
-        session_chainlink_raw, session_chainlink_rows = _collect_chainlink_ticks(
-            config,
-            logger=logger,
-        )
-        session_exchange_raw, session_exchange_rows = _collect_exchange_quotes(
-            config,
-            logger=logger,
-        )
-        session_polymarket_raw, session_polymarket_rows = _collect_polymarket_quote(
+
+        chainlink_result = _collect_chainlink_ticks(config, logger=logger)
+        exchange_result = _collect_exchange_quotes(config, logger=logger)
+        polymarket_result = _collect_polymarket_quote(
             config,
             selected_market=sample_market,
+            selected_window_id=selected_window_id,
             logger=logger,
         )
-        chainlink_raw.extend(session_chainlink_raw)
-        chainlink_rows.extend(session_chainlink_rows)
-        exchange_raw.extend(session_exchange_raw)
-        exchange_rows.extend(session_exchange_rows)
-        polymarket_raw.extend(session_polymarket_raw)
-        polymarket_rows.extend(session_polymarket_rows)
+        source_results = {
+            chainlink_result.source_name: chainlink_result,
+            exchange_result.source_name: exchange_result,
+            polymarket_result.source_name: polymarket_result,
+        }
+
+        for source_name, result in source_results.items():
+            retry_count_by_source[source_name] += result.retries
+            if result.status != "success":
+                source_failure_count_by_source[source_name] += 1
+                if result.status == "retry_exhausted":
+                    retry_exhaustion_count_by_source[source_name] += 1
+            missing_output = len(result.normalized_rows) == 0
+            if missing_output:
+                consecutive_missing_by_source[source_name] += 1
+            else:
+                consecutive_missing_by_source[source_name] = 0
+            max_consecutive_missing_by_source[source_name] = max(
+                max_consecutive_missing_by_source[source_name],
+                consecutive_missing_by_source[source_name],
+            )
+
+        if polymarket_result.status == "degraded_empty_book":
+            empty_book_count += 1
+
+        chainlink_raw.extend(chainlink_result.raw_rows)
+        chainlink_rows.extend(chainlink_result.normalized_rows)
+        exchange_raw.extend(exchange_result.raw_rows)
+        exchange_rows.extend(exchange_result.normalized_rows)
+        polymarket_raw.extend(polymarket_result.raw_rows)
+        polymarket_rows.extend(polymarket_result.normalized_rows)
+
+        degraded_sources = tuple(
+            source_name
+            for source_name, result in source_results.items()
+            if result.status != "success"
+        )
+        if degraded_sources:
+            if all(len(result.normalized_rows) == 0 for result in source_results.values()):
+                sample_status = "failed"
+                failed_sample_count += 1
+            else:
+                sample_status = "degraded"
+                degraded_sample_count += 1
+            logger.warning(
+                "sample %s completed with degraded sources: %s",
+                sample_count,
+                ", ".join(degraded_sources),
+            )
+        else:
+            sample_status = "healthy"
+
+        if consecutive_missing_by_source["chainlink"] >= config.max_consecutive_chainlink_failures:
+            termination_reason = "chainlink_failure_threshold_exceeded"
+        elif (
+            consecutive_missing_by_source["exchange"]
+            >= config.max_consecutive_exchange_failures
+        ):
+            termination_reason = "exchange_failure_threshold_exceeded"
+        elif (
+            consecutive_missing_by_source["polymarket_quotes"]
+            >= config.max_consecutive_polymarket_failures
+        ):
+            termination_reason = "polymarket_failure_threshold_exceeded"
+
+        sample_result = SampleDiagnostics(
+            sample_index=sample_count,
+            sample_started_at=sample_started_at,
+            sample_status=sample_status,
+            selected_market_id=sample_market.market_id,
+            selected_market_slug=sample_market.market_slug,
+            selected_window_id=selected_window_id,
+            family_validation_status=family_validation_status,
+            degraded_sources=degraded_sources,
+            source_results=source_results,
+            termination_reason=(termination_reason if termination_reason != "completed" else None),
+        )
+        sample_diagnostics_rows.append(sample_result.to_summary_dict())
+
+        if termination_reason != "completed":
+            logger.error("terminating capture early: %s", termination_reason)
+            break
 
         if deadline is None:
             break
@@ -270,6 +534,19 @@ def run_phase1_capture(
         / f"session={config.session_id}"
         / "summary.json"
     )
+    sample_diagnostics_path = summary_path.with_name("sample_diagnostics.jsonl")
+    write_jsonl_rows(sample_diagnostics_path, sample_diagnostics_rows)
+    session_diagnostics = SessionDiagnostics(
+        degraded_sample_count=degraded_sample_count,
+        failed_sample_count=failed_sample_count,
+        empty_book_count=empty_book_count,
+        retry_count_by_source=dict(retry_count_by_source),
+        retry_exhaustion_count_by_source=dict(retry_exhaustion_count_by_source),
+        source_failure_count_by_source=dict(source_failure_count_by_source),
+        max_consecutive_missing_by_source=dict(max_consecutive_missing_by_source),
+        termination_reason=termination_reason,
+        sample_diagnostics_path=sample_diagnostics_path,
+    )
     result = Phase1CaptureResult(
         session_id=config.session_id,
         capture_date=capture_date,
@@ -281,6 +558,7 @@ def run_phase1_capture(
         duration_seconds=duration_seconds,
         poll_interval_seconds=poll_interval_seconds,
         sample_count=sample_count,
+        session_diagnostics=session_diagnostics,
         summary_path=summary_path,
         collectors=collectors,
     )
@@ -309,7 +587,7 @@ def _collect_polymarket_metadata(
     MarketMetadataCandidate,
     MetadataSelectionDiagnostics,
 ]:
-    raw_messages, normalized_candidates = _fetch_polymarket_market_pages(config)
+    raw_messages, normalized_candidates = _fetch_polymarket_market_pages(config, logger=logger)
     btc_candidates = [
         candidate
         for candidate in normalized_candidates
@@ -452,6 +730,8 @@ def _select_market_for_current_time(
 
 def _fetch_polymarket_market_pages(
     config: Phase1CaptureConfig,
+    *,
+    logger: logging.Logger | None = None,
 ) -> tuple[list[RawMetadataMessage], list[MarketMetadataCandidate]]:
     raw_messages: list[RawMetadataMessage] = []
     candidates: list[MarketMetadataCandidate] = []
@@ -466,8 +746,22 @@ def _fetch_polymarket_market_pages(
         }
         request_url = "https://gamma-api.polymarket.com/events?" + urlencode(params)
         recv_ts = datetime.now(UTC)
-        status, _, payload = _http_json(request_url, timeout_seconds=config.timeout_seconds)
+        response = _http_json(
+            request_url,
+            timeout_seconds=config.timeout_seconds,
+            max_retries=config.max_fetch_retries,
+            base_backoff_seconds=config.base_backoff_seconds,
+            max_backoff_seconds=config.max_backoff_seconds,
+            source_name="polymarket_metadata",
+            logger=logger,
+        )
+        if response.status != "success":
+            raise RuntimeError(
+                "Polymarket metadata fetch failed: "
+                f"{response.failure_type} {response.failure_message}"
+            )
         proc_ts = datetime.now(UTC)
+        payload = response.payload
         if not isinstance(payload, list):
             raise RuntimeError("Polymarket events endpoint returned a non-list payload")
         raw_message = RawMetadataMessage(
@@ -498,7 +792,7 @@ def _fetch_polymarket_market_pages(
             parser_version=POLYMARKET_METADATA_PARSER_VERSION,
             schema_version=POLYMARKET_METADATA_SCHEMA_VERSION,
             parse_status="parsed",
-            http_status=status,
+            http_status=response.http_status or 200,
             request_url=request_url,
         )
         raw_messages.append(raw_message)
@@ -531,9 +825,31 @@ def _collect_chainlink_ticks(
     config: Phase1CaptureConfig,
     *,
     logger: logging.Logger,
-) -> tuple[list[dict[str, object]], list[ChainlinkTick]]:
+) -> SourceCaptureResult:
     recv_ts = datetime.now(UTC)
-    decimals = _fetch_chainlink_decimals(config)
+    decimals_result = _fetch_chainlink_decimals(config, logger=logger)
+    if decimals_result.status != "success":
+        return SourceCaptureResult(
+            source_name="chainlink",
+            status=decimals_result.status,
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="chainlink",
+                    request_url=config.chainlink_rpc_url,
+                    recv_ts=recv_ts,
+                    status=decimals_result.status,
+                    failure_type=decimals_result.failure_type,
+                    failure_message=decimals_result.failure_message,
+                    details={"rpc_method": "decimals"},
+                ),
+            ),
+            normalized_rows=(),
+            retries=decimals_result.retries,
+            failure_type=decimals_result.failure_type,
+            failure_message=decimals_result.failure_message,
+            details={"rpc_method": "decimals"},
+        )
+
     rpc_response = _rpc_json(
         config.chainlink_rpc_url,
         {
@@ -549,13 +865,39 @@ def _collect_chainlink_ticks(
             ],
         },
         timeout_seconds=config.timeout_seconds,
+        max_retries=config.max_fetch_retries,
+        base_backoff_seconds=config.base_backoff_seconds,
+        max_backoff_seconds=config.max_backoff_seconds,
+        source_name="chainlink",
+        logger=logger,
     )
+    if rpc_response.status != "success":
+        return SourceCaptureResult(
+            source_name="chainlink",
+            status=rpc_response.status,
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="chainlink",
+                    request_url=config.chainlink_rpc_url,
+                    recv_ts=recv_ts,
+                    status=rpc_response.status,
+                    failure_type=rpc_response.failure_type,
+                    failure_message=rpc_response.failure_message,
+                    details={"rpc_method": "latestRoundData"},
+                ),
+            ),
+            normalized_rows=(),
+            retries=decimals_result.retries + rpc_response.retries,
+            failure_type=rpc_response.failure_type,
+            failure_message=rpc_response.failure_message,
+            details={"rpc_method": "latestRoundData"},
+        )
     proc_ts = datetime.now(UTC)
-    latest_round = _decode_latest_round_data(rpc_response["result"])
+    latest_round = _decode_latest_round_data(rpc_response.payload["result"])
     round_id = str(latest_round["round_id"])
     updated_at = int(latest_round["updated_at"])
     event_ts = datetime.fromtimestamp(updated_at, tz=UTC)
-    price = Decimal(latest_round["answer"]) / (Decimal(10) ** int(decimals))
+    price = Decimal(latest_round["answer"]) / (Decimal(10) ** int(decimals_result.payload))
     tick = ChainlinkTick(
         event_id=f"chainlink:round:{round_id}",
         event_ts=event_ts,
@@ -574,106 +916,253 @@ def _collect_chainlink_ticks(
         "proc_ts": proc_ts,
         "oracle_feed_id": DEFAULT_ORACLE_FEED_ID,
         "round_id": round_id,
-        "decimals": decimals,
-        "rpc_payload": rpc_response,
+        "decimals": decimals_result.payload,
+        "rpc_payload": rpc_response.payload,
     }
     logger.info("captured Chainlink round %s at %s", round_id, format_utc(event_ts))
-    return [raw_row], [tick]
+    return SourceCaptureResult(
+        source_name="chainlink",
+        status="success",
+        raw_rows=(raw_row,),
+        normalized_rows=(tick,),
+        retries=decimals_result.retries + rpc_response.retries,
+    )
 
 
 def _collect_exchange_quotes(
     config: Phase1CaptureConfig,
     *,
     logger: logging.Logger,
-) -> tuple[list[dict[str, object]], list[ExchangeQuote]]:
+) -> SourceCaptureResult:
     raw_rows: list[dict[str, object]] = []
     normalized_rows: list[ExchangeQuote] = []
+    total_retries = 0
+    venue_statuses: dict[str, str] = {}
+    failure_type: str | None = None
+    failure_message: str | None = None
 
-    binance_recv_ts = datetime.now(UTC)
-    _, _, binance_payload = _http_json(
-        config.binance_book_ticker_url,
-        timeout_seconds=config.timeout_seconds,
-    )
-    binance_quote = normalize_binance_quote(
-        _shape_binance_payload(binance_payload),
-        recv_ts=binance_recv_ts,
-    )
-    raw_rows.append(
-        _raw_capture_row(
-            venue_id=VenueCode.BINANCE.value,
-            request_url=config.binance_book_ticker_url,
-            recv_ts=binance_recv_ts,
-            raw_payload=binance_payload,
-            raw_event_id=binance_quote.raw_event_id,
+    for venue_id, request_url, shaper, normalizer in (
+        (
+            VenueCode.BINANCE.value,
+            config.binance_book_ticker_url,
+            _shape_binance_payload,
+            normalize_binance_quote,
+        ),
+        (
+            VenueCode.COINBASE.value,
+            config.coinbase_book_url,
+            _shape_coinbase_payload,
+            normalize_coinbase_quote,
+        ),
+        (
+            VenueCode.KRAKEN.value,
+            config.kraken_book_url,
+            lambda payload: _shape_kraken_payload(payload, recv_ts=datetime.now(UTC)),
+            normalize_kraken_quote,
+        ),
+    ):
+        recv_ts = datetime.now(UTC)
+        fetch_result = _http_json(
+            request_url,
+            timeout_seconds=config.timeout_seconds,
+            max_retries=config.max_fetch_retries,
+            base_backoff_seconds=config.base_backoff_seconds,
+            max_backoff_seconds=config.max_backoff_seconds,
+            source_name="exchange",
+            logger=logger,
         )
-    )
-    normalized_rows.append(binance_quote)
+        total_retries += fetch_result.retries
+        if fetch_result.status != "success":
+            venue_statuses[venue_id] = fetch_result.status
+            failure_type = fetch_result.failure_type
+            failure_message = fetch_result.failure_message
+            raw_rows.append(
+                _failure_raw_row(
+                    source_name="exchange",
+                    request_url=request_url,
+                    recv_ts=recv_ts,
+                    status=fetch_result.status,
+                    failure_type=fetch_result.failure_type,
+                    failure_message=fetch_result.failure_message,
+                    venue_id=venue_id,
+                )
+            )
+            continue
+        shaped_payload = (
+            _shape_kraken_payload(fetch_result.payload, recv_ts=recv_ts)
+            if venue_id == VenueCode.KRAKEN.value
+            else shaper(fetch_result.payload)
+        )
+        quote = normalizer(shaped_payload, recv_ts=recv_ts)
+        raw_rows.append(
+            _raw_capture_row(
+                venue_id=venue_id,
+                request_url=request_url,
+                recv_ts=recv_ts,
+                raw_payload=fetch_result.payload,
+                raw_event_id=quote.raw_event_id,
+            )
+        )
+        normalized_rows.append(quote)
+        venue_statuses[venue_id] = "success"
 
-    coinbase_recv_ts = datetime.now(UTC)
-    _, _, coinbase_payload = _http_json(
-        config.coinbase_book_url,
-        timeout_seconds=config.timeout_seconds,
-    )
-    coinbase_quote = normalize_coinbase_quote(
-        _shape_coinbase_payload(coinbase_payload),
-        recv_ts=coinbase_recv_ts,
-    )
-    raw_rows.append(
-        _raw_capture_row(
-            venue_id=VenueCode.COINBASE.value,
-            request_url=config.coinbase_book_url,
-            recv_ts=coinbase_recv_ts,
-            raw_payload=coinbase_payload,
-            raw_event_id=coinbase_quote.raw_event_id,
+    if len(normalized_rows) == 3:
+        status = "success"
+    elif normalized_rows:
+        status = "degraded_partial"
+    else:
+        status = (
+            "retry_exhausted"
+            if any(result == "retry_exhausted" for result in venue_statuses.values())
+            else "terminal_failure"
         )
-    )
-    normalized_rows.append(coinbase_quote)
-
-    kraken_recv_ts = datetime.now(UTC)
-    _, _, kraken_payload = _http_json(
-        config.kraken_book_url,
-        timeout_seconds=config.timeout_seconds,
-    )
-    kraken_quote = normalize_kraken_quote(
-        _shape_kraken_payload(kraken_payload, recv_ts=kraken_recv_ts),
-        recv_ts=kraken_recv_ts,
-    )
-    raw_rows.append(
-        _raw_capture_row(
-            venue_id=VenueCode.KRAKEN.value,
-            request_url=config.kraken_book_url,
-            recv_ts=kraken_recv_ts,
-            raw_payload=kraken_payload,
-            raw_event_id=kraken_quote.raw_event_id,
-        )
-    )
-    normalized_rows.append(kraken_quote)
 
     logger.info("captured %s exchange quote snapshots", len(normalized_rows))
-    return raw_rows, normalized_rows
+    return SourceCaptureResult(
+        source_name="exchange",
+        status=status,
+        raw_rows=tuple(raw_rows),
+        normalized_rows=tuple(normalized_rows),
+        retries=total_retries,
+        failure_type=failure_type,
+        failure_message=failure_message,
+        details={
+            "venue_statuses": dict(sorted(venue_statuses.items())),
+            "captured_venues": sorted(quote.venue_id for quote in normalized_rows),
+        },
+    )
 
 
 def _collect_polymarket_quote(
     config: Phase1CaptureConfig,
     *,
     selected_market: MarketMetadataCandidate,
+    selected_window_id: str,
     logger: logging.Logger,
-) -> tuple[list[dict[str, object]], list[PolymarketQuote]]:
+) -> SourceCaptureResult:
+    recv_ts = datetime.now(UTC)
     if selected_market.token_yes_id is None or selected_market.token_no_id is None:
-        raise RuntimeError("selected Polymarket market is missing CLOB token ids")
+        return SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status="terminal_failure",
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="polymarket_quotes",
+                    request_url="",
+                    recv_ts=recv_ts,
+                    status="terminal_failure",
+                    failure_type="MissingTokenIds",
+                    failure_message="selected Polymarket market is missing CLOB token ids",
+                    market_id=selected_market.market_id,
+                    details={"selected_window_id": selected_window_id},
+                ),
+            ),
+            normalized_rows=(),
+            failure_type="MissingTokenIds",
+            failure_message="selected Polymarket market is missing CLOB token ids",
+            details={"selected_window_id": selected_window_id},
+        )
 
     yes_url = config.polymarket_book_url_template.format(token_id=selected_market.token_yes_id)
     no_url = config.polymarket_book_url_template.format(token_id=selected_market.token_no_id)
-    recv_ts = datetime.now(UTC)
-    _, _, yes_book = _http_json(yes_url, timeout_seconds=config.timeout_seconds)
-    _, _, no_book = _http_json(no_url, timeout_seconds=config.timeout_seconds)
-    payload = _build_polymarket_quote_payload(
+    yes_book_result = _http_json(
+        yes_url,
+        timeout_seconds=config.timeout_seconds,
+        max_retries=config.max_fetch_retries,
+        base_backoff_seconds=config.base_backoff_seconds,
+        max_backoff_seconds=config.max_backoff_seconds,
+        source_name="polymarket_quotes",
+        logger=logger,
+    )
+    no_book_result = _http_json(
+        no_url,
+        timeout_seconds=config.timeout_seconds,
+        max_retries=config.max_fetch_retries,
+        base_backoff_seconds=config.base_backoff_seconds,
+        max_backoff_seconds=config.max_backoff_seconds,
+        source_name="polymarket_quotes",
+        logger=logger,
+    )
+    total_retries = yes_book_result.retries + no_book_result.retries
+    failed_fetch = next(
+        (
+            result
+            for result in (yes_book_result, no_book_result)
+            if result.status != "success"
+        ),
+        None,
+    )
+    if failed_fetch is not None:
+        return SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status=failed_fetch.status,
+            raw_rows=(
+                _failure_raw_row(
+                    source_name="polymarket_quotes",
+                    request_url=",".join((yes_url, no_url)),
+                    recv_ts=recv_ts,
+                    status=failed_fetch.status,
+                    failure_type=failed_fetch.failure_type,
+                    failure_message=failed_fetch.failure_message,
+                    market_id=selected_market.market_id,
+                    details={"selected_window_id": selected_window_id},
+                ),
+            ),
+            normalized_rows=(),
+            retries=total_retries,
+            failure_type=failed_fetch.failure_type,
+            failure_message=failed_fetch.failure_message,
+            details={"selected_window_id": selected_window_id},
+        )
+
+    payload, empty_sides = _build_polymarket_quote_payload(
         market_id=selected_market.market_id,
         yes_token_id=selected_market.token_yes_id,
         no_token_id=selected_market.token_no_id,
-        yes_book=yes_book,
-        no_book=no_book,
+        yes_book=yes_book_result.payload,
+        no_book=no_book_result.payload,
     )
+    raw_payload = {
+        "yes_book": yes_book_result.payload,
+        "no_book": no_book_result.payload,
+        "normalized_payload": payload,
+    }
+    if empty_sides:
+        logger.warning(
+            "captured degraded Polymarket quote for %s with empty levels: %s",
+            selected_market.market_id,
+            ", ".join(empty_sides),
+        )
+        return SourceCaptureResult(
+            source_name="polymarket_quotes",
+            status="degraded_empty_book",
+            raw_rows=(
+                {
+                    "raw_event_id": (
+                        "polymarket-degraded:"
+                        f"{selected_market.market_id}:{int(recv_ts.timestamp())}"
+                    ),
+                    "venue_id": VenueCode.POLYMARKET.value,
+                    "source_type": "clob_book_snapshot",
+                    "request_urls": [yes_url, no_url],
+                    "recv_ts": recv_ts,
+                    "proc_ts": datetime.now(UTC),
+                    "market_id": selected_market.market_id,
+                    "token_yes_id": selected_market.token_yes_id,
+                    "token_no_id": selected_market.token_no_id,
+                    "capture_status": "degraded_empty_book",
+                    "empty_sides": list(empty_sides),
+                    "selected_window_id": selected_window_id,
+                    "raw_payload": raw_payload,
+                },
+            ),
+            normalized_rows=(),
+            retries=total_retries,
+            details={
+                "empty_sides": list(empty_sides),
+                "selected_window_id": selected_window_id,
+            },
+        )
     quote = normalize_polymarket_quote(payload, recv_ts=recv_ts)
     raw_row = {
         "raw_event_id": quote.raw_event_id,
@@ -685,14 +1174,19 @@ def _collect_polymarket_quote(
         "market_id": selected_market.market_id,
         "token_yes_id": selected_market.token_yes_id,
         "token_no_id": selected_market.token_no_id,
-        "raw_payload": {
-            "yes_book": yes_book,
-            "no_book": no_book,
-            "normalized_payload": payload,
-        },
+        "selected_window_id": selected_window_id,
+        "capture_status": "success",
+        "raw_payload": raw_payload,
     }
     logger.info("captured Polymarket quote for %s", selected_market.market_id)
-    return [raw_row], [quote]
+    return SourceCaptureResult(
+        source_name="polymarket_quotes",
+        status="success",
+        raw_rows=(raw_row,),
+        normalized_rows=(quote,),
+        retries=total_retries,
+        details={"selected_window_id": selected_window_id},
+    )
 
 
 def _write_dataset(
@@ -825,11 +1319,20 @@ def _build_polymarket_quote_payload(
     no_token_id: str,
     yes_book: dict[str, Any],
     no_book: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    empty_sides: list[str] = []
     yes_bid = _best_price_level(yes_book.get("bids"), side="bid", reverse=True)
+    if yes_bid is None:
+        empty_sides.append("up_bid")
     yes_ask = _best_price_level(yes_book.get("asks"), side="ask", reverse=False)
+    if yes_ask is None:
+        empty_sides.append("up_ask")
     no_bid = _best_price_level(no_book.get("bids"), side="bid", reverse=True)
+    if no_bid is None:
+        empty_sides.append("down_bid")
     no_ask = _best_price_level(no_book.get("asks"), side="ask", reverse=False)
+    if no_ask is None:
+        empty_sides.append("down_ask")
     event_ts = datetime.fromtimestamp(
         max(int(yes_book["timestamp"]), int(no_book["timestamp"])) / 1000,
         tz=UTC,
@@ -852,12 +1355,12 @@ def _build_polymarket_quote_payload(
                 "ask": no_ask,
             },
         },
-    }
+    }, tuple(empty_sides)
 
 
-def _best_price_level(levels: Any, *, side: str, reverse: bool) -> dict[str, str]:
+def _best_price_level(levels: Any, *, side: str, reverse: bool) -> dict[str, str] | None:
     if not isinstance(levels, list) or not levels:
-        raise RuntimeError(f"Polymarket {side} book is empty")
+        return None
     chosen = sorted(levels, key=lambda level: Decimal(str(level["price"])), reverse=reverse)[0]
     return {
         "price": str(chosen["price"]),
@@ -865,7 +1368,11 @@ def _best_price_level(levels: Any, *, side: str, reverse: bool) -> dict[str, str
     }
 
 
-def _fetch_chainlink_decimals(config: Phase1CaptureConfig) -> int:
+def _fetch_chainlink_decimals(
+    config: Phase1CaptureConfig,
+    *,
+    logger: logging.Logger,
+) -> FetchResult:
     response = _rpc_json(
         config.chainlink_rpc_url,
         {
@@ -881,8 +1388,21 @@ def _fetch_chainlink_decimals(config: Phase1CaptureConfig) -> int:
             ],
         },
         timeout_seconds=config.timeout_seconds,
+        max_retries=config.max_fetch_retries,
+        base_backoff_seconds=config.base_backoff_seconds,
+        max_backoff_seconds=config.max_backoff_seconds,
+        source_name="chainlink",
+        logger=logger,
     )
-    return int(response["result"], 16)
+    if response.status != "success":
+        return response
+    return FetchResult(
+        status="success",
+        payload=int(response.payload["result"], 16),
+        attempts=response.attempts,
+        retries=response.retries,
+        headers=response.headers,
+    )
 
 
 def _hash_metadata_page(
@@ -922,7 +1442,12 @@ def _http_json(
     url: str,
     *,
     timeout_seconds: float,
-) -> tuple[int, dict[str, str], Any]:
+    max_retries: int,
+    base_backoff_seconds: float,
+    max_backoff_seconds: float,
+    source_name: str,
+    logger: logging.Logger | None = None,
+) -> FetchResult:
     request = Request(
         url,
         headers={
@@ -931,9 +1456,14 @@ def _http_json(
         },
         method="GET",
     )
-    with urlopen(request, timeout=timeout_seconds) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-        return response.status, dict(response.headers.items()), payload
+    return _run_with_retries(
+        source_name=source_name,
+        operation=lambda: _execute_http_request(request, timeout_seconds=timeout_seconds),
+        max_retries=max_retries,
+        base_backoff_seconds=base_backoff_seconds,
+        max_backoff_seconds=max_backoff_seconds,
+        logger=logger,
+    )
 
 
 def _rpc_json(
@@ -941,7 +1471,12 @@ def _rpc_json(
     payload: dict[str, object],
     *,
     timeout_seconds: float,
-) -> dict[str, Any]:
+    max_retries: int,
+    base_backoff_seconds: float,
+    max_backoff_seconds: float,
+    source_name: str,
+    logger: logging.Logger | None = None,
+) -> FetchResult:
     request = Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -952,22 +1487,169 @@ def _rpc_json(
         },
         method="POST",
     )
+    return _run_with_retries(
+        source_name=source_name,
+        operation=lambda: _execute_rpc_request(request, timeout_seconds=timeout_seconds),
+        max_retries=max_retries,
+        base_backoff_seconds=base_backoff_seconds,
+        max_backoff_seconds=max_backoff_seconds,
+        logger=logger,
+    )
+
+
+def _execute_http_request(
+    request: Request,
+    *,
+    timeout_seconds: float,
+) -> tuple[int, dict[str, str], Any]:
+    with urlopen(request, timeout=timeout_seconds) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+        return response.status, dict(response.headers.items()), payload
+
+
+def _execute_rpc_request(
+    request: Request,
+    *,
+    timeout_seconds: float,
+) -> tuple[int, dict[str, str], Any]:
     with urlopen(request, timeout=timeout_seconds) as response:
         decoded = json.loads(response.read().decode("utf-8"))
-    if "error" in decoded:
-        raise RuntimeError(f"rpc call failed: {decoded['error']}")
-    return decoded
+        if isinstance(decoded, dict) and decoded.get("error"):
+            raise RuntimeError(f"rpc call failed: {decoded['error']}")
+        return response.status, dict(response.headers.items()), decoded
+
+
+def _run_with_retries(
+    *,
+    source_name: str,
+    operation: Callable[[], tuple[int, dict[str, str], T]],
+    max_retries: int,
+    base_backoff_seconds: float,
+    max_backoff_seconds: float,
+    logger: logging.Logger | None = None,
+) -> FetchResult:
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            status, headers, payload = operation()
+            return FetchResult(
+                status="success",
+                payload=payload,
+                attempts=attempts,
+                retries=max(0, attempts - 1),
+                http_status=status,
+                headers=headers,
+            )
+        except Exception as exc:  # pragma: no cover - exercised by caller tests
+            retryable, http_status = _classify_retryable_exception(exc)
+            failure_type = type(exc).__name__
+            failure_message = str(exc)
+            if not retryable:
+                return FetchResult(
+                    status="terminal_failure",
+                    payload=None,
+                    attempts=attempts,
+                    retries=max(0, attempts - 1),
+                    failure_type=failure_type,
+                    failure_message=failure_message,
+                    http_status=http_status,
+                )
+            if attempts > max_retries:
+                return FetchResult(
+                    status="retry_exhausted",
+                    payload=None,
+                    attempts=attempts,
+                    retries=max(0, attempts - 1),
+                    failure_type=failure_type,
+                    failure_message=failure_message,
+                    http_status=http_status,
+                )
+            backoff_seconds = _retry_backoff_seconds(
+                attempt=attempts,
+                base_backoff_seconds=base_backoff_seconds,
+                max_backoff_seconds=max_backoff_seconds,
+            )
+            if logger is not None:
+                logger.warning(
+                    "%s fetch attempt %s/%s failed with %s: %s; retrying in %.3fs",
+                    source_name,
+                    attempts,
+                    max_retries + 1,
+                    failure_type,
+                    failure_message,
+                    backoff_seconds,
+                )
+            time.sleep(backoff_seconds)
+
+
+def _classify_retryable_exception(exc: Exception) -> tuple[bool, int | None]:
+    if isinstance(exc, HTTPError):
+        return exc.code in RETRYABLE_HTTP_STATUS_CODES, exc.code
+    if isinstance(exc, URLError):
+        return True, None
+    if isinstance(exc, (TimeoutError, socket.timeout, ConnectionResetError, OSError)):
+        return True, None
+    return False, None
+
+
+def _retry_backoff_seconds(
+    *,
+    attempt: int,
+    base_backoff_seconds: float,
+    max_backoff_seconds: float,
+) -> float:
+    capped_backoff = min(max_backoff_seconds, base_backoff_seconds * (2 ** max(0, attempt - 1)))
+    return capped_backoff + random.uniform(0.0, min(0.5, capped_backoff))
+
+
+def _failure_raw_row(
+    *,
+    source_name: str,
+    request_url: str,
+    recv_ts: datetime,
+    status: str,
+    failure_type: str | None,
+    failure_message: str | None,
+    venue_id: str | None = None,
+    market_id: str | None = None,
+    details: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "raw_event_id": f"{source_name}:{status}:{int(recv_ts.timestamp() * 1000)}",
+        "venue_id": venue_id,
+        "source_type": "capture_failure",
+        "request_url": request_url,
+        "recv_ts": recv_ts,
+        "proc_ts": datetime.now(UTC),
+        "market_id": market_id,
+        "capture_status": status,
+        "failure_type": failure_type,
+        "failure_message": failure_message,
+        "details": details or {},
+    }
 
 
 __all__ = [
     "CollectorArtifactSet",
+    "DEFAULT_BASE_BACKOFF_SECONDS",
     "DEFAULT_DURATION_SECONDS",
+    "DEFAULT_MAX_BACKOFF_SECONDS",
+    "DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES",
+    "DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES",
+    "DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES",
+    "DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES",
+    "DEFAULT_MAX_FETCH_RETRIES",
     "DEFAULT_METADATA_LIMIT",
     "DEFAULT_METADATA_PAGES",
     "DEFAULT_POLL_INTERVAL_SECONDS",
     "DEFAULT_TIMEOUT_SECONDS",
+    "FetchResult",
     "MetadataSelectionDiagnostics",
     "Phase1CaptureConfig",
     "Phase1CaptureResult",
+    "SampleDiagnostics",
+    "SessionDiagnostics",
+    "SourceCaptureResult",
     "run_phase1_capture",
 ]

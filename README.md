@@ -31,6 +31,7 @@ Implemented today:
 - canonical `replay_day` runner with deterministic artifact output
 - sanctioned `./scripts/run_collectors.sh` phase-1 capture command that writes real raw and normalized JSONL files
 - integration coverage for the replay-day artifact contract
+- bounded capture resilience with retry/backoff, degraded-sample diagnostics, and threshold-based early termination
 
 Not yet implemented end to end:
 
@@ -51,6 +52,7 @@ The original architecture still matters and remains the north star. The current 
 - Polymarket metadata discovery currently pulls from the `up-or-down` event feed rather than the broader market search surface. Reason: that feed exposes the recurring BTC 5-minute family densely enough to admit the exact target strip without scanning thousands of unrelated events first.
 - The live selector now admits only exact BTC 5-minute family candidates and binds them to canonical `window_id`s before quote capture. Reason: the repo’s canonical grammar treats `window_id` as primary and market binding as a downstream step, so live capture now follows that same contract.
 - During bounded sessions, quote capture can roll between admitted family members as the live 5-minute window advances. Reason: the target family is recurring, so a 10-minute smoke run must stay on the same family while moving from one canonical window to the next.
+- The bounded capture path now treats transient fetch failures and empty Polymarket books as degraded operational states instead of process-killing exceptions. Reason: rollover-safe collection depends on session resilience and honest diagnostics before any replay admission work can be trusted.
 
 Those are implementation shortcuts, not architectural reversals. The intended endpoint is still a source-faithful, continuously operating collection layer that preserves the oracle-anchored replay contract.
 

@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Sequence
 
 from rtds.collectors.phase1_capture import (
+    DEFAULT_BASE_BACKOFF_SECONDS,
     DEFAULT_DURATION_SECONDS,
+    DEFAULT_MAX_BACKOFF_SECONDS,
+    DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES,
+    DEFAULT_MAX_FETCH_RETRIES,
     DEFAULT_METADATA_LIMIT,
     DEFAULT_METADATA_PAGES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -43,6 +50,37 @@ def _build_parser() -> argparse.ArgumentParser:
         "--poll-interval-seconds",
         type=float,
         default=DEFAULT_POLL_INTERVAL_SECONDS,
+    )
+    parser.add_argument("--max-fetch-retries", type=int, default=DEFAULT_MAX_FETCH_RETRIES)
+    parser.add_argument(
+        "--base-backoff-seconds",
+        type=float,
+        default=DEFAULT_BASE_BACKOFF_SECONDS,
+    )
+    parser.add_argument(
+        "--max-backoff-seconds",
+        type=float,
+        default=DEFAULT_MAX_BACKOFF_SECONDS,
+    )
+    parser.add_argument(
+        "--max-consecutive-selection-failures",
+        type=int,
+        default=DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES,
+    )
+    parser.add_argument(
+        "--max-consecutive-chainlink-failures",
+        type=int,
+        default=DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES,
+    )
+    parser.add_argument(
+        "--max-consecutive-exchange-failures",
+        type=int,
+        default=DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES,
+    )
+    parser.add_argument(
+        "--max-consecutive-polymarket-failures",
+        type=int,
+        default=DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES,
     )
     parser.add_argument("--prepare-only", action="store_true")
     return parser
@@ -126,6 +164,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata_pages=args.metadata_pages,
         duration_seconds=args.duration_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
+        max_fetch_retries=args.max_fetch_retries,
+        base_backoff_seconds=args.base_backoff_seconds,
+        max_backoff_seconds=args.max_backoff_seconds,
+        max_consecutive_selection_failures=args.max_consecutive_selection_failures,
+        max_consecutive_chainlink_failures=args.max_consecutive_chainlink_failures,
+        max_consecutive_exchange_failures=args.max_consecutive_exchange_failures,
+        max_consecutive_polymarket_failures=args.max_consecutive_polymarket_failures,
     )
     try:
         result = run_phase1_capture(config, logger=logger)
