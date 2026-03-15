@@ -54,11 +54,13 @@ Current implementation notes:
 - normalized exchange quote state is implemented for Binance, Coinbase, and Kraken in `src/rtds/schemas/normalized.py` and `src/rtds/normalizers/exchange.py`
 - normalized Polymarket executable quote state is implemented in `src/rtds/schemas/normalized.py` and `src/rtds/normalizers/polymarket.py`
 - Polymarket metadata discovery currently includes both raw metadata capture and candidate normalization in `src/rtds/collectors/polymarket/metadata.py`
+- a sanctioned phase-1 capture workflow now materializes real files under `data/raw/...` and `data/normalized/...` via `./scripts/run_collectors.sh`
+- the current capture implementation writes `market_metadata_events`, `chainlink_ticks`, `exchange_quotes`, and `polymarket_quotes` JSONL partitions directly and is intentionally one-shot rather than daemonized
 - the canonical replay runner currently loads normalized JSONL datasets from `data/normalized/...` rather than invoking live collectors
 - unified raw event schemas in `src/rtds/schemas/raw_events.py` are still a placeholder
 - Chainlink normalization in `src/rtds/normalizers/chainlink.py` is still a placeholder
-- collector CLIs and live collection workflows are still placeholders, so the repo does not yet materialize the full raw and normalized datasets described below
-- persisted storage is currently implemented for the `window_reference` dataset; raw and normalized dataset writers are not yet implemented
+- the current live collection workflow is narrower than the target design: it uses public REST and RPC snapshots instead of the eventual websocket / RTDS-first fleet
+- persisted storage is implemented for `window_reference` plus the phase-1 raw and normalized JSONL partitions used by the live capture command
 
 These are implementation gaps, not changes in architectural direction. The design intent here still governs how the raw and normalized layers should be completed.
 

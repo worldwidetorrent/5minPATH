@@ -17,6 +17,16 @@ What it runs:
 
 This is a one-shot capture pass, not a daemon. It is enough to make `data/raw/` and `data/normalized/` non-empty with real public data.
 
+## Deviation note
+
+The original architecture still aims at source-faithful, continuously running collectors. The current phase-1 implementation is intentionally narrower:
+
+- it is one-shot, not long-running
+- it uses public REST and RPC endpoints instead of the eventual websocket / RTDS-first stack
+- it persists the minimum real raw and normalized datasets needed to unblock replay-day admission work
+
+This deviation is deliberate. The immediate requirement is to prove the repo can produce real persisted files under the frozen layout without committing captured data or broadening the module surface prematurely.
+
 ## Start
 
 Run from repo root:

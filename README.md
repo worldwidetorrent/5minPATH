@@ -14,7 +14,7 @@ That question sounds small. It is not.
 
 ## Current status
 
-The architecture described in this README is still the target design. The codebase now implements the core research spine and one canonical replay-day execution path, but it still does not implement the full live collection stack.
+The architecture described in this README is still the target design. The codebase now implements the core research spine, one canonical replay-day execution path, and a sanctioned phase-1 capture command that materializes real raw and normalized files. It still does not implement the full long-running live collection stack described later in this document.
 
 Implemented today:
 
@@ -29,18 +29,28 @@ Implemented today:
 - composite nowcast, volatility, baseline fair value, and executable edge
 - snapshot assembly, offline label attachment, taker-only replay simulation, and slice analysis
 - canonical `replay_day` runner with deterministic artifact output
+- sanctioned `./scripts/run_collectors.sh` phase-1 capture command that writes real raw and normalized JSONL files
 - integration coverage for the replay-day artifact contract
 
 Not yet implemented end to end:
 
-- live collector workflow is still a placeholder
 - dedicated `build_snapshots` CLI is still a placeholder
 - raw event schemas are still conceptual rather than fully implemented in code
-- Chainlink normalization is still a placeholder
 - execution/fill schemas are still a placeholder
-- most raw and normalized datasets are still expected as prebuilt JSONL inputs rather than being produced by a live ingestion path
+- the full intended streaming collector fleet is not implemented; the current capture path is a one-shot public-endpoint snapshot pass
+- most downstream admission and replay logic still expects curated day partitions rather than a continuously running ingestion service
 
 When the code is narrower than the design described below, the design should be read as the intended architecture and the narrower implementation as the current phase-1 state.
+
+### Current phase-1 deviation from target design
+
+The original architecture still matters and remains the north star. The current capture implementation deviates from it in a few deliberate ways:
+
+- It uses a one-shot orchestration pass instead of long-running collectors. Reason: the immediate success metric is to get from an empty `data/` tree to one admissible real day, not to finish the full operational stack first.
+- It uses public REST and RPC snapshots for Binance.US, Coinbase, Kraken, Chainlink, and Polymarket instead of websocket-first or RTDS-first streams. Reason: these public endpoints are sufficient to materialize real files now and keep the schema/replay spine moving.
+- It selects one live BTC Polymarket market from current metadata rather than yet proving the exact 5-minute target market family end to end. Reason: phase 1 is about producing real persisted source truth under the frozen layout before tightening market-admission policy.
+
+Those are implementation shortcuts, not architectural reversals. The intended endpoint is still a source-faithful, continuously operating collection layer that preserves the oracle-anchored replay contract.
 
 To answer it correctly, the system has to know:
 
