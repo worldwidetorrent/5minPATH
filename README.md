@@ -37,7 +37,7 @@ Not yet implemented end to end:
 - dedicated `build_snapshots` CLI is still a placeholder
 - raw event schemas are still conceptual rather than fully implemented in code
 - execution/fill schemas are still a placeholder
-- the full intended streaming collector fleet is not implemented; the current capture path is a one-shot public-endpoint snapshot pass
+- the full intended streaming collector fleet is not implemented; the current capture path is a bounded public-endpoint snapshot session rather than a continuously running service
 - most downstream admission and replay logic still expects curated day partitions rather than a continuously running ingestion service
 
 When the code is narrower than the design described below, the design should be read as the intended architecture and the narrower implementation as the current phase-1 state.
@@ -46,8 +46,9 @@ When the code is narrower than the design described below, the design should be 
 
 The original architecture still matters and remains the north star. The current capture implementation deviates from it in a few deliberate ways:
 
-- It uses a one-shot orchestration pass instead of long-running collectors. Reason: the immediate success metric is to get from an empty `data/` tree to one admissible real day, not to finish the full operational stack first.
+- It uses a bounded orchestration session instead of long-running collectors. Reason: the immediate success metric is to prove the repo can land coherent real files in a controlled smoke-test window before expanding to full-day operations.
 - It uses public REST and RPC snapshots for Binance.US, Coinbase, Kraken, Chainlink, and Polymarket instead of websocket-first or RTDS-first streams. Reason: these public endpoints are sufficient to materialize real files now and keep the schema/replay spine moving.
+- Polymarket metadata discovery currently pulls from the active event feed rather than the broader market search surface. Reason: the event feed exposed a materially better BTC candidate strip for smoke-session validation, while still preserving raw payload capture and normalized candidate rows.
 - It selects one live BTC Polymarket market from current metadata rather than yet proving the exact 5-minute target market family end to end. Reason: phase 1 is about producing real persisted source truth under the frozen layout before tightening market-admission policy.
 
 Those are implementation shortcuts, not architectural reversals. The intended endpoint is still a source-faithful, continuously operating collection layer that preserves the oracle-anchored replay contract.

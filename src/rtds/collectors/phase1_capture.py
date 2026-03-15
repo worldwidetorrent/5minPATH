@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -39,6 +40,8 @@ from rtds.storage.writer import write_json_file, write_jsonl_rows
 DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_METADATA_LIMIT = 500
 DEFAULT_METADATA_PAGES = 1
+DEFAULT_DURATION_SECONDS = 0.0
+DEFAULT_POLL_INTERVAL_SECONDS = 60.0
 DEFAULT_CHAINLINK_RPC_URL = "https://arb1.arbitrum.io/rpc"
 DEFAULT_CHAINLINK_PROXY_ADDRESS = "0x6ce185860a4963106506C203335A2910413708e9"
 DEFAULT_CHAINLINK_FEED_PAGE_URL = "https://data.chain.link/feeds/arbitrum/mainnet/btc-usd"
@@ -63,6 +66,8 @@ class Phase1CaptureConfig:
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     metadata_limit: int = DEFAULT_METADATA_LIMIT
     metadata_pages: int = DEFAULT_METADATA_PAGES
+    duration_seconds: float = DEFAULT_DURATION_SECONDS
+    poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
     chainlink_rpc_url: str = DEFAULT_CHAINLINK_RPC_URL
     chainlink_proxy_address: str = DEFAULT_CHAINLINK_PROXY_ADDRESS
     chainlink_feed_page_url: str = DEFAULT_CHAINLINK_FEED_PAGE_URL
@@ -91,6 +96,9 @@ class Phase1CaptureResult:
     capture_date: date
     selected_market_id: str
     selected_market_question: str | None
+    duration_seconds: float
+    poll_interval_seconds: float
+    sample_count: int
     summary_path: Path
     collectors: tuple[CollectorArtifactSet, ...]
 
@@ -100,6 +108,9 @@ class Phase1CaptureResult:
             "capture_date": self.capture_date.isoformat(),
             "selected_market_id": self.selected_market_id,
             "selected_market_question": self.selected_market_question,
+            "duration_seconds": self.duration_seconds,
+            "poll_interval_seconds": self.poll_interval_seconds,
+            "sample_count": self.sample_count,
             "collectors": [
                 {
                     "collector_name": collector.collector_name,
@@ -118,7 +129,7 @@ def run_phase1_capture(
     *,
     logger: logging.Logger,
 ) -> Phase1CaptureResult:
-    """Run the sanctioned phase-1 capture contract once."""
+    """Run the sanctioned phase-1 capture contract for one bounded session."""
 
     capture_started_at = config.capture_started_at or datetime.now(UTC)
     capture_date = capture_started_at.date()
@@ -127,13 +138,51 @@ def run_phase1_capture(
         config,
         logger=logger,
     )
-    chainlink_raw, chainlink_rows = _collect_chainlink_ticks(config, logger=logger)
-    exchange_raw, exchange_rows = _collect_exchange_quotes(config, logger=logger)
-    polymarket_raw, polymarket_rows = _collect_polymarket_quote(
-        config,
-        selected_market=selected_market,
-        logger=logger,
-    )
+    chainlink_raw: list[dict[str, object]] = []
+    chainlink_rows: list[ChainlinkTick] = []
+    exchange_raw: list[dict[str, object]] = []
+    exchange_rows: list[ExchangeQuote] = []
+    polymarket_raw: list[dict[str, object]] = []
+    polymarket_rows: list[PolymarketQuote] = []
+
+    duration_seconds = max(config.duration_seconds, 0.0)
+    poll_interval_seconds = max(config.poll_interval_seconds, 0.0)
+    deadline = time.monotonic() + duration_seconds if duration_seconds > 0 else None
+    sample_count = 0
+
+    while True:
+        sample_count += 1
+        logger.info("starting capture sample %s", sample_count)
+        session_chainlink_raw, session_chainlink_rows = _collect_chainlink_ticks(
+            config,
+            logger=logger,
+        )
+        session_exchange_raw, session_exchange_rows = _collect_exchange_quotes(
+            config,
+            logger=logger,
+        )
+        session_polymarket_raw, session_polymarket_rows = _collect_polymarket_quote(
+            config,
+            selected_market=selected_market,
+            logger=logger,
+        )
+        chainlink_raw.extend(session_chainlink_raw)
+        chainlink_rows.extend(session_chainlink_rows)
+        exchange_raw.extend(session_exchange_raw)
+        exchange_rows.extend(session_exchange_rows)
+        polymarket_raw.extend(session_polymarket_raw)
+        polymarket_rows.extend(session_polymarket_rows)
+
+        if deadline is None:
+            break
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            break
+        if poll_interval_seconds <= 0:
+            break
+        sleep_seconds = min(poll_interval_seconds, remaining_seconds)
+        logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
+        time.sleep(sleep_seconds)
 
     collectors = (
         _write_dataset(
@@ -186,6 +235,9 @@ def run_phase1_capture(
         capture_date=capture_date,
         selected_market_id=selected_market.market_id,
         selected_market_question=selected_market.market_question,
+        duration_seconds=duration_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        sample_count=sample_count,
         summary_path=summary_path,
         collectors=collectors,
     )
@@ -210,31 +262,40 @@ def _collect_polymarket_metadata(
     logger: logging.Logger,
 ) -> tuple[list[RawMetadataMessage], list[MarketMetadataCandidate], MarketMetadataCandidate]:
     raw_messages, normalized_candidates = _fetch_polymarket_market_pages(config)
-    candidates = [
+    btc_candidates = [
         candidate
         for candidate in normalized_candidates
         if candidate.asset_id == "BTC"
-        and candidate.active_flag is not False
         and candidate.closed_flag is not True
         and candidate.archived_flag is not True
-        and candidate.token_yes_id is not None
-        and candidate.token_no_id is not None
     ]
-    if not candidates:
-        raise RuntimeError("no active BTC Polymarket markets with token ids were discovered")
+    if not btc_candidates:
+        raise RuntimeError("no BTC Polymarket markets were discovered")
 
     preferred = [
         candidate
-        for candidate in candidates
-        if "chainlink" in (candidate.resolution_source_text or "").lower()
+        for candidate in btc_candidates
+        if candidate.active_flag is not False
+        and candidate.token_yes_id is not None
+        and candidate.token_no_id is not None
+        and "chainlink" in (candidate.resolution_source_text or "").lower()
     ]
-    selected_market = preferred[0] if preferred else candidates[0]
+    fallback = [
+        candidate
+        for candidate in btc_candidates
+        if candidate.active_flag is not False
+        and candidate.token_yes_id is not None
+        and candidate.token_no_id is not None
+    ]
+    if not fallback:
+        raise RuntimeError("no active BTC Polymarket markets with token ids were discovered")
+    selected_market = preferred[0] if preferred else fallback[0]
     logger.info(
         "selected Polymarket market %s (%s)",
         selected_market.market_id,
         selected_market.market_question or selected_market.market_title or "unknown",
     )
-    return raw_messages, candidates, selected_market
+    return raw_messages, btc_candidates, selected_market
 
 
 def _fetch_polymarket_market_pages(
@@ -244,20 +305,19 @@ def _fetch_polymarket_market_pages(
     candidates: list[MarketMetadataCandidate] = []
     offset = 0
 
-    for page_index in range(config.metadata_pages):
+    for _ in range(config.metadata_pages):
         params = {
+            "active": "true",
             "closed": "false",
             "limit": config.metadata_limit,
             "offset": offset,
         }
-        request_url = (
-            "https://gamma-api.polymarket.com/markets?" + urlencode(params)
-        )
+        request_url = "https://gamma-api.polymarket.com/events?" + urlencode(params)
         recv_ts = datetime.now(UTC)
         status, _, payload = _http_json(request_url, timeout_seconds=config.timeout_seconds)
         proc_ts = datetime.now(UTC)
         if not isinstance(payload, list):
-            raise RuntimeError("Polymarket markets endpoint returned a non-list payload")
+            raise RuntimeError("Polymarket events endpoint returned a non-list payload")
         raw_message = RawMetadataMessage(
             raw_event_id=_hash_metadata_page(
                 session_id=config.session_id,
@@ -267,10 +327,17 @@ def _fetch_polymarket_market_pages(
             ),
             venue_id=VenueCode.POLYMARKET.value,
             source_type="metadata_http",
-            endpoint="/markets",
-            market_id=str(payload[0].get("conditionId") or payload[0].get("id") or "")
-            if payload
-            else None,
+            endpoint="/events",
+            market_id=(
+                str(
+                    ((payload[0].get("markets") or [{}])[0].get("conditionId"))
+                    or ((payload[0].get("markets") or [{}])[0].get("id"))
+                    or payload[0].get("id")
+                    or ""
+                )
+                if payload
+                else None
+            ),
             recv_ts=recv_ts,
             proc_ts=proc_ts,
             raw_payload=payload,
@@ -283,24 +350,24 @@ def _fetch_polymarket_market_pages(
             request_url=request_url,
         )
         raw_messages.append(raw_message)
-        for market_payload in payload:
-            if not isinstance(market_payload, dict):
+        for event_payload in payload:
+            if not isinstance(event_payload, dict):
                 continue
-            event_payload = None
-            events = market_payload.get("events")
-            if isinstance(events, list) and events:
-                first_event = events[0]
-                if isinstance(first_event, dict):
-                    event_payload = first_event
-            candidates.append(
-                normalize_market_payload(
-                    market_payload=market_payload,
-                    event_payload=event_payload,
-                    recv_ts=recv_ts,
-                    proc_ts=proc_ts,
-                    raw_event_id=raw_message.raw_event_id,
+            markets = event_payload.get("markets")
+            if not isinstance(markets, list):
+                continue
+            for market_payload in markets:
+                if not isinstance(market_payload, dict):
+                    continue
+                candidates.append(
+                    normalize_market_payload(
+                        market_payload=market_payload,
+                        event_payload=event_payload,
+                        recv_ts=recv_ts,
+                        proc_ts=proc_ts,
+                        raw_event_id=raw_message.raw_event_id,
+                    )
                 )
-            )
         if len(payload) < config.metadata_limit:
             break
         offset += config.metadata_limit
@@ -742,8 +809,10 @@ def _rpc_json(
 
 __all__ = [
     "CollectorArtifactSet",
+    "DEFAULT_DURATION_SECONDS",
     "DEFAULT_METADATA_LIMIT",
     "DEFAULT_METADATA_PAGES",
+    "DEFAULT_POLL_INTERVAL_SECONDS",
     "DEFAULT_TIMEOUT_SECONDS",
     "Phase1CaptureConfig",
     "Phase1CaptureResult",

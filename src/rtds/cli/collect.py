@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Sequence
 
 from rtds.collectors.phase1_capture import (
+    DEFAULT_DURATION_SECONDS,
     DEFAULT_METADATA_LIMIT,
     DEFAULT_METADATA_PAGES,
+    DEFAULT_POLL_INTERVAL_SECONDS,
     DEFAULT_TIMEOUT_SECONDS,
     Phase1CaptureConfig,
     run_phase1_capture,
@@ -36,6 +38,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--metadata-limit", type=int, default=DEFAULT_METADATA_LIMIT)
     parser.add_argument("--metadata-pages", type=int, default=DEFAULT_METADATA_PAGES)
+    parser.add_argument("--duration-seconds", type=float, default=DEFAULT_DURATION_SECONDS)
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
+    )
     parser.add_argument("--prepare-only", action="store_true")
     return parser
 
@@ -116,6 +124,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         timeout_seconds=args.timeout_seconds,
         metadata_limit=args.metadata_limit,
         metadata_pages=args.metadata_pages,
+        duration_seconds=args.duration_seconds,
+        poll_interval_seconds=args.poll_interval_seconds,
     )
     try:
         result = run_phase1_capture(config, logger=logger)
