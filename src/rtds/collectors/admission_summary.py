@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -394,10 +394,6 @@ def _resolve_selected_window_bindings(
     metadata_rows: list[MarketMetadataCandidate],
     capture_date: Any,
 ) -> SelectedWindowBindings:
-    schedule_by_window_id = {
-        window.window_id: window for window in daily_window_schedule(capture_date)
-    }
-    metadata_by_market_id = _latest_metadata_by_market_id(metadata_rows)
     observed_window_ids = sorted(
         {
             str(row["selected_window_id"])
@@ -405,6 +401,11 @@ def _resolve_selected_window_bindings(
             if row.get("selected_window_id") is not None
         }
     )
+    schedule_by_window_id = _schedule_by_window_id(
+        observed_window_ids=observed_window_ids,
+        capture_date=capture_date,
+    )
+    metadata_by_market_id = _latest_metadata_by_market_id(metadata_rows)
 
     states_by_window_id: dict[str, dict[tuple[str, str | None], dict[str, Any]]] = {}
     for sample_row in sample_rows:
@@ -460,6 +461,35 @@ def _resolve_selected_window_bindings(
         observed_window_ids=observed_window_ids,
         unresolved_window_ids=unresolved_window_ids,
     )
+
+
+def _schedule_by_window_id(
+    *,
+    observed_window_ids: list[str],
+    capture_date: Any,
+) -> dict[str, Any]:
+    schedule_dates = {date.fromisoformat(str(capture_date))}
+    for window_id in observed_window_ids:
+        window_start_ts = _window_start_from_window_id(window_id)
+        if window_start_ts is not None:
+            schedule_dates.add(window_start_ts.date())
+
+    schedule_by_window_id: dict[str, Any] = {}
+    for schedule_date in sorted(schedule_dates):
+        schedule_by_window_id.update(
+            {window.window_id: window for window in daily_window_schedule(schedule_date)}
+        )
+    return schedule_by_window_id
+
+
+def _window_start_from_window_id(window_id: str) -> datetime | None:
+    if not window_id.startswith("btc-5m-"):
+        return None
+    suffix = window_id.removeprefix("btc-5m-")
+    try:
+        return datetime.strptime(suffix, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
 def _summarize_metadata_strip(

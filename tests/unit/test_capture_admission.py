@@ -65,6 +65,185 @@ def test_build_capture_admission_summary_keeps_refresh_duplicates_out_of_off_fam
     assert summary["mapping_and_anchor"]["mapped_window_count"] == 3
 
 
+def test_build_capture_admission_summary_maps_windows_across_utc_midnight(
+    tmp_path: Path,
+) -> None:
+    capture_date = date(2026, 3, 15)
+    metadata_path = tmp_path / "data" / "normalized" / "market_metadata_events" / "part-00000.jsonl"
+    chainlink_path = tmp_path / "data" / "normalized" / "chainlink_ticks" / "part-00000.jsonl"
+    sample_diagnostics_path = tmp_path / "artifacts" / "collect" / "sample_diagnostics.jsonl"
+    summary_path = tmp_path / "artifacts" / "collect" / "summary.json"
+
+    markets = [
+        _metadata_candidate(
+            market_id="0x" + "1" * 64,
+            slug="btc-updown-5m-1773618900",
+            start_ts=datetime(2026, 3, 15, 23, 55, tzinfo=UTC),
+        ),
+        _metadata_candidate(
+            market_id="0x" + "2" * 64,
+            slug="btc-updown-5m-1773619200",
+            start_ts=datetime(2026, 3, 16, 0, 0, tzinfo=UTC),
+        ),
+        _metadata_candidate(
+            market_id="0x" + "3" * 64,
+            slug="btc-updown-5m-1773619500",
+            start_ts=datetime(2026, 3, 16, 0, 5, tzinfo=UTC),
+        ),
+        _metadata_candidate(
+            market_id="0x" + "4" * 64,
+            slug="btc-updown-5m-1773619800",
+            start_ts=datetime(2026, 3, 16, 0, 10, tzinfo=UTC),
+        ),
+    ]
+    write_jsonl_rows(metadata_path, markets)
+    write_jsonl_rows(
+        chainlink_path,
+        [
+            ChainlinkTick(
+                event_id="cl:2355",
+                event_ts=datetime(2026, 3, 15, 23, 55, 1, tzinfo=UTC),
+                price=Decimal("84000.00"),
+                recv_ts=datetime(2026, 3, 15, 23, 55, 1, tzinfo=UTC),
+            ),
+            ChainlinkTick(
+                event_id="cl:0000",
+                event_ts=datetime(2026, 3, 16, 0, 0, 1, tzinfo=UTC),
+                price=Decimal("84010.00"),
+                recv_ts=datetime(2026, 3, 16, 0, 0, 1, tzinfo=UTC),
+            ),
+            ChainlinkTick(
+                event_id="cl:0005",
+                event_ts=datetime(2026, 3, 16, 0, 5, 1, tzinfo=UTC),
+                price=Decimal("84020.00"),
+                recv_ts=datetime(2026, 3, 16, 0, 5, 1, tzinfo=UTC),
+            ),
+            ChainlinkTick(
+                event_id="cl:0010",
+                event_ts=datetime(2026, 3, 16, 0, 10, 1, tzinfo=UTC),
+                price=Decimal("84030.00"),
+                recv_ts=datetime(2026, 3, 16, 0, 10, 1, tzinfo=UTC),
+            ),
+        ],
+    )
+    write_jsonl_rows(
+        sample_diagnostics_path,
+        [
+            _sample(
+                index=1,
+                started_at=datetime(2026, 3, 15, 23, 55, 30, tzinfo=UTC),
+                market_id=markets[0].market_id,
+                slug=markets[0].market_slug,
+                window_id="btc-5m-20260315T235500Z",
+            ),
+            _sample(
+                index=2,
+                started_at=datetime(2026, 3, 16, 0, 0, 30, tzinfo=UTC),
+                market_id=markets[1].market_id,
+                slug=markets[1].market_slug,
+                window_id="btc-5m-20260316T000000Z",
+            ),
+            _sample(
+                index=3,
+                started_at=datetime(2026, 3, 16, 0, 5, 30, tzinfo=UTC),
+                market_id=markets[2].market_id,
+                slug=markets[2].market_slug,
+                window_id="btc-5m-20260316T000500Z",
+            ),
+            _sample(
+                index=4,
+                started_at=datetime(2026, 3, 16, 0, 10, 30, tzinfo=UTC),
+                market_id=markets[3].market_id,
+                slug=markets[3].market_slug,
+                window_id="btc-5m-20260316T001000Z",
+            ),
+        ],
+    )
+    write_json_file(summary_path, {"session_id": "test-session"})
+
+    result = Phase1CaptureResult(
+        session_id="test-session",
+        capture_date=capture_date,
+        selected_market_id=markets[0].market_id,
+        selected_market_slug=markets[0].market_slug,
+        selected_market_question=markets[0].market_question,
+        selected_window_id="btc-5m-20260315T235500Z",
+        selector_diagnostics=MetadataSelectionDiagnostics(
+            selected_market_id=markets[0].market_id,
+            selected_market_slug=markets[0].market_slug,
+            selected_window_id="btc-5m-20260315T235500Z",
+            candidate_count=4,
+            admitted_count=4,
+            rejected_count_by_reason={},
+        ),
+        duration_seconds=600.0,
+        poll_interval_seconds=1.0,
+        sample_count=4,
+        session_diagnostics=SessionDiagnostics(
+            degraded_sample_count=0,
+            failed_sample_count=0,
+            empty_book_count=0,
+            retry_count_by_source={},
+            retry_exhaustion_count_by_source={},
+            source_failure_count_by_source={},
+            max_consecutive_missing_by_source={"chainlink": 0, "polymarket_quotes": 0},
+            polymarket_failure_count_by_class={},
+            polymarket_selector_refresh_count=0,
+            polymarket_selector_rebind_count=0,
+            polymarket_rollover_grace_sample_count=0,
+            termination_reason="completed",
+            sample_diagnostics_path=sample_diagnostics_path,
+        ),
+        summary_path=summary_path,
+        collectors=(
+            CollectorArtifactSet(
+                collector_name="polymarket_metadata",
+                raw_path=tmp_path / "data" / "raw" / "polymarket_metadata" / "part-00000.jsonl",
+                normalized_path=metadata_path,
+                raw_row_count=4,
+                normalized_row_count=4,
+            ),
+            CollectorArtifactSet(
+                collector_name="chainlink",
+                raw_path=tmp_path / "data" / "raw" / "chainlink" / "part-00000.jsonl",
+                normalized_path=chainlink_path,
+                raw_row_count=4,
+                normalized_row_count=4,
+            ),
+            CollectorArtifactSet(
+                collector_name="exchange",
+                raw_path=tmp_path / "data" / "raw" / "exchange" / "part-00000.jsonl",
+                normalized_path=tmp_path
+                / "data"
+                / "normalized"
+                / "exchange_quotes"
+                / "part-00000.jsonl",
+                raw_row_count=12,
+                normalized_row_count=12,
+            ),
+            CollectorArtifactSet(
+                collector_name="polymarket_quotes",
+                raw_path=tmp_path / "data" / "raw" / "polymarket_quotes" / "part-00000.jsonl",
+                normalized_path=tmp_path
+                / "data"
+                / "normalized"
+                / "polymarket_quotes"
+                / "part-00000.jsonl",
+                raw_row_count=4,
+                normalized_row_count=4,
+            ),
+        ),
+    )
+
+    summary = build_capture_admission_summary(result)
+
+    assert summary["mapping_and_anchor"]["mapped_window_count"] == 4
+    assert summary["mapping_and_anchor"]["selected_binding_unresolved_window_count"] == 0
+    assert summary["mapping_and_anchor"]["anchor_assignment_confidence_breakdown"] == {
+        "high": 4
+    }
+
+
 def _capture_result(
     tmp_path: Path,
     *,
