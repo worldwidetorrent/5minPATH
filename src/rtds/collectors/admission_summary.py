@@ -105,6 +105,9 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
     polymarket_present_count = 0
     samples_with_all_exchange_venues = 0
     snapshot_eligible_sample_count = 0
+    polymarket_empty_book_count_by_window: Counter[str] = Counter()
+    polymarket_empty_book_count_by_slug: Counter[str] = Counter()
+    polymarket_window_table: dict[str, dict[str, object]] = {}
 
     anchor_confidence_breakdown: Counter[str] = Counter()
     anchor_confidence_by_window_id: dict[str, str] = {}
@@ -169,11 +172,106 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
                 degraded_outside_grace += 1
 
         selected_window_id = sample_row.get("selected_window_id")
+        selected_market_slug = sample_row.get("selected_market_slug")
+        window_summary: dict[str, object] | None = None
+        if selected_window_id is not None:
+            window_summary = polymarket_window_table.setdefault(
+                str(selected_window_id),
+                {
+                    "window_id": str(selected_window_id),
+                    "selected_market_ids": set(),
+                    "selected_market_slugs": set(),
+                    "total_samples": 0,
+                    "samples_with_quote_rows": 0,
+                    "valid_empty_book_samples": 0,
+                    "quote_unavailable_samples": 0,
+                    "binding_invalid_samples": 0,
+                    "degraded_samples_inside_rollover_grace_window": 0,
+                    "degraded_samples_outside_rollover_grace_window": 0,
+                    "current_valid_empty_book_streak": 0,
+                    "current_quote_unavailable_streak": 0,
+                    "max_consecutive_valid_empty_book": 0,
+                    "max_consecutive_quote_unavailable": 0,
+                    "family_continuity_pass": True,
+                    "oracle_continuity_pass": True,
+                    "exchange_continuity_pass": True,
+                    "snapshot_eligible_samples": 0,
+                },
+            )
+            market_ids = window_summary["selected_market_ids"]
+            if isinstance(market_ids, set) and sample_row.get("selected_market_id") is not None:
+                market_ids.add(str(sample_row["selected_market_id"]))
+            market_slugs = window_summary["selected_market_slugs"]
+            if isinstance(market_slugs, set) and selected_market_slug is not None:
+                market_slugs.add(str(selected_market_slug))
+            window_summary["total_samples"] = int(window_summary["total_samples"]) + 1
+            if not is_family_compliant:
+                window_summary["family_continuity_pass"] = False
+            if chainlink_result.get("normalized_row_count", 0) <= 0:
+                window_summary["oracle_continuity_pass"] = False
+            if not all(str(venue_statuses.get(venue)) == "success" for venue in EXCHANGE_VENUES):
+                window_summary["exchange_continuity_pass"] = False
+
         anchor_confidence = (
             anchor_confidence_by_window_id.get(str(selected_window_id))
             if selected_window_id is not None
             else None
         )
+        polymarket_semantics = _polymarket_failure_semantics(polymarket_result)
+        if window_summary is not None:
+            if polymarket_result.get("normalized_row_count", 0) > 0:
+                window_summary["samples_with_quote_rows"] = (
+                    int(window_summary["samples_with_quote_rows"]) + 1
+                )
+                window_summary["current_valid_empty_book_streak"] = 0
+                window_summary["current_quote_unavailable_streak"] = 0
+            elif polymarket_semantics == "valid_empty_book":
+                window_summary["valid_empty_book_samples"] = (
+                    int(window_summary["valid_empty_book_samples"]) + 1
+                )
+                streak = int(window_summary["current_valid_empty_book_streak"]) + 1
+                window_summary["current_valid_empty_book_streak"] = streak
+                window_summary["current_quote_unavailable_streak"] = 0
+                window_summary["max_consecutive_valid_empty_book"] = max(
+                    int(window_summary["max_consecutive_valid_empty_book"]),
+                    streak,
+                )
+                polymarket_empty_book_count_by_window[str(selected_window_id)] += 1
+                if selected_market_slug is not None:
+                    polymarket_empty_book_count_by_slug[str(selected_market_slug)] += 1
+            elif polymarket_semantics == "quote_unavailable":
+                window_summary["quote_unavailable_samples"] = (
+                    int(window_summary["quote_unavailable_samples"]) + 1
+                )
+                streak = int(window_summary["current_quote_unavailable_streak"]) + 1
+                window_summary["current_quote_unavailable_streak"] = streak
+                window_summary["current_valid_empty_book_streak"] = 0
+                window_summary["max_consecutive_quote_unavailable"] = max(
+                    int(window_summary["max_consecutive_quote_unavailable"]),
+                    streak,
+                )
+            elif polymarket_semantics == "binding_invalid":
+                window_summary["binding_invalid_samples"] = (
+                    int(window_summary["binding_invalid_samples"]) + 1
+                )
+                streak = int(window_summary["current_quote_unavailable_streak"]) + 1
+                window_summary["current_quote_unavailable_streak"] = streak
+                window_summary["current_valid_empty_book_streak"] = 0
+                window_summary["max_consecutive_quote_unavailable"] = max(
+                    int(window_summary["max_consecutive_quote_unavailable"]),
+                    streak,
+                )
+
+            if sample_row.get("sample_status") == "degraded":
+                if polymarket_details.get("within_rollover_grace_window"):
+                    window_summary["degraded_samples_inside_rollover_grace_window"] = (
+                        int(window_summary["degraded_samples_inside_rollover_grace_window"]) + 1
+                    )
+                else:
+                    window_summary["degraded_samples_outside_rollover_grace_window"] = (
+                        int(window_summary["degraded_samples_outside_rollover_grace_window"]) + 1
+                    )
+
         if (
             is_family_compliant
             and chainlink_result.get("normalized_row_count", 0) > 0
@@ -182,6 +280,10 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
             and anchor_confidence in {"high", "medium", "low"}
         ):
             snapshot_eligible_sample_count += 1
+            if window_summary is not None:
+                window_summary["snapshot_eligible_samples"] = (
+                    int(window_summary["snapshot_eligible_samples"]) + 1
+                )
 
     degraded_sample_count = int(sample_status_counts.get("degraded", 0))
     failed_sample_count = int(sample_status_counts.get("failed", 0))
@@ -200,6 +302,17 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
         snapshot_eligible_ratio=snapshot_eligible_ratio,
         sample_count=sample_count,
     )
+    window_quote_coverage_threshold = (
+        result.session_diagnostics.polymarket_unusable_window_min_quote_coverage_ratio
+    )
+    window_rows = [
+        _finalize_window_summary(
+            window_summary,
+            unusable_min_quote_coverage_ratio=window_quote_coverage_threshold,
+        )
+        for _, window_summary in sorted(polymarket_window_table.items())
+    ]
+    window_verdict_counts = Counter(row["window_verdict"] for row in window_rows)
 
     return {
         "session_id": result.session_id,
@@ -272,6 +385,20 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
                 result.session_diagnostics.polymarket_rollover_grace_sample_count
             ),
             "samples_with_quote_rows": polymarket_present_count,
+            "empty_book_count_by_window": dict(
+                sorted(polymarket_empty_book_count_by_window.items())
+            ),
+            "empty_book_count_by_slug": dict(
+                sorted(polymarket_empty_book_count_by_slug.items())
+            ),
+            "window_verdict_counts": dict(sorted(window_verdict_counts.items())),
+            "window_quote_coverage": window_rows,
+            "window_quote_coverage_policy": {
+                "pilot_runtime_max_consecutive_unusable_windows": (
+                    result.session_diagnostics.max_consecutive_unusable_polymarket_windows
+                ),
+                "unusable_min_quote_coverage_ratio": window_quote_coverage_threshold,
+            },
         },
         "chainlink_continuity": {
             "samples_with_ticks": chainlink_present_count,
@@ -366,6 +493,82 @@ def _classify_admission_verdict(
             "degradation or snapshot coverage fell below conditional admission thresholds"
         )
     return "not_admissible", reasons
+
+
+def _polymarket_failure_semantics(result: dict[str, Any]) -> str | None:
+    failure_class = _optional_str(result.get("failure_class"))
+    if failure_class in {"degraded_empty_book", "valid_empty_book"}:
+        return "valid_empty_book"
+    if failure_class in {
+        "retryable_http_404",
+        "retryable_http_5xx",
+        "quote_unavailable",
+    }:
+        return "quote_unavailable"
+    if failure_class in {
+        "terminal_invalid_market",
+        "market_binding_stale",
+        "binding_invalid",
+    }:
+        return "binding_invalid"
+    return None
+
+
+def _finalize_window_summary(
+    window_summary: dict[str, object],
+    *,
+    unusable_min_quote_coverage_ratio: float,
+) -> dict[str, object]:
+    total_samples = int(window_summary["total_samples"])
+    samples_with_quote_rows = int(window_summary["samples_with_quote_rows"])
+    quote_coverage_ratio = (
+        samples_with_quote_rows / total_samples if total_samples else 0.0
+    )
+    binding_invalid_samples = int(window_summary["binding_invalid_samples"])
+    quote_unavailable_samples = int(window_summary["quote_unavailable_samples"])
+    valid_empty_book_samples = int(window_summary["valid_empty_book_samples"])
+    if (
+        binding_invalid_samples > 0
+        or quote_coverage_ratio < unusable_min_quote_coverage_ratio
+        or (samples_with_quote_rows == 0 and total_samples > 0)
+    ):
+        window_verdict = "unusable"
+    elif quote_unavailable_samples > 0 or valid_empty_book_samples > 0:
+        window_verdict = "degraded"
+    else:
+        window_verdict = "good"
+    return {
+        "window_id": str(window_summary["window_id"]),
+        "selected_market_ids": sorted(
+            str(value) for value in window_summary["selected_market_ids"]
+        ),
+        "selected_market_slugs": sorted(
+            str(value) for value in window_summary["selected_market_slugs"]
+        ),
+        "family_continuity_pass": bool(window_summary["family_continuity_pass"]),
+        "oracle_continuity_pass": bool(window_summary["oracle_continuity_pass"]),
+        "exchange_continuity_pass": bool(window_summary["exchange_continuity_pass"]),
+        "total_samples": total_samples,
+        "samples_with_quote_rows": samples_with_quote_rows,
+        "quote_coverage_ratio": quote_coverage_ratio,
+        "valid_empty_book_samples": valid_empty_book_samples,
+        "quote_unavailable_samples": quote_unavailable_samples,
+        "binding_invalid_samples": binding_invalid_samples,
+        "degraded_samples_inside_rollover_grace_window": int(
+            window_summary["degraded_samples_inside_rollover_grace_window"]
+        ),
+        "degraded_samples_outside_rollover_grace_window": int(
+            window_summary["degraded_samples_outside_rollover_grace_window"]
+        ),
+        "max_consecutive_valid_empty_book": int(
+            window_summary["max_consecutive_valid_empty_book"]
+        ),
+        "max_consecutive_quote_unavailable": int(
+            window_summary["max_consecutive_quote_unavailable"]
+        ),
+        "snapshot_eligible_samples": int(window_summary["snapshot_eligible_samples"]),
+        "window_verdict": window_verdict,
+    }
 
 
 def _sample_is_family_compliant(

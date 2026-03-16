@@ -430,17 +430,17 @@ def test_run_phase1_capture_keeps_running_after_empty_book_sample(
         if index == 2:
             return SourceCaptureResult(
                 source_name="polymarket_quotes",
-                status="degraded_empty_book",
+                status="degraded_valid_empty_book",
                 raw_rows=(
                     {
                         "raw_event_id": "polymarket:degraded:2",
                         "market_id": selected_market.market_id,
                         "selected_window_id": selected_window_id,
-                        "capture_status": "degraded_empty_book",
+                        "capture_status": "valid_empty_book",
                     },
                 ),
                 normalized_rows=(),
-                failure_class="degraded_empty_book",
+                failure_class="valid_empty_book",
                 details={"empty_sides": ["up_bid"], "selected_window_id": selected_window_id},
             )
         return SourceCaptureResult(
@@ -508,8 +508,10 @@ def test_run_phase1_capture_keeps_running_after_empty_book_sample(
     assert degraded_row["degraded_sources"] == ["polymarket_quotes"]
     assert (
         degraded_row["source_results"]["polymarket_quotes"]["failure_class"]
-        == "degraded_empty_book"
+        == "valid_empty_book"
     )
+    assert result.session_diagnostics.max_consecutive_missing_by_source["polymarket_quotes"] == 0
+    assert result.session_diagnostics.polymarket_window_coverage[0]["window_verdict"] == "degraded"
 
 
 def test_run_with_retries_retries_then_succeeds(monkeypatch) -> None:
@@ -541,6 +543,114 @@ def test_run_with_retries_retries_then_succeeds(monkeypatch) -> None:
     assert result.payload == {"ok": True}
     assert result.retries == 2
     assert sleep_calls == [0.5, 1.0]
+
+
+def test_run_phase1_capture_does_not_hard_stop_on_valid_empty_book_streak(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    metadata_raw = _metadata_raw(_metadata_candidate().market_id)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=_metadata_candidate().market_id,
+        selected_market_slug=_metadata_candidate().market_slug,
+        selected_window_id="btc-5m-20260313T120500Z",
+        candidate_count=1,
+        admitted_count=1,
+        rejected_count_by_reason={},
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_metadata",
+        lambda config, logger: (
+            [metadata_raw],
+            [_metadata_candidate()],
+            _metadata_candidate(),
+            selector_diagnostics,
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_ticks",
+        lambda config, logger: SourceCaptureResult(
+            source_name="chainlink",
+            status="success",
+            raw_rows=({"raw_event_id": "chainlink:round:1"},),
+            normalized_rows=(
+                ChainlinkTick(
+                    event_id="chainlink:round:1",
+                    event_ts=datetime(2026, 3, 13, 12, 5, 1, tzinfo=UTC),
+                    price=Decimal("84000.00"),
+                    recv_ts=datetime(2026, 3, 13, 12, 5, 1, tzinfo=UTC),
+                    round_id="1",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_exchange_quotes",
+        lambda config, logger: SourceCaptureResult(
+            source_name="exchange",
+            status="success",
+            raw_rows=(
+                {"raw_event_id": "binance:1", "venue_id": "binance"},
+                {"raw_event_id": "coinbase:1", "venue_id": "coinbase"},
+                {"raw_event_id": "kraken:1", "venue_id": "kraken"},
+            ),
+            normalized_rows=(_binance_quote(1), _coinbase_quote(1), _kraken_quote(1)),
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_quote",
+        lambda config, selected_market, selected_window_id, current_ts=None, logger=None: (
+            SourceCaptureResult(
+                source_name="polymarket_quotes",
+                status="degraded_valid_empty_book",
+                raw_rows=(
+                    {
+                        "raw_event_id": "polymarket:valid-empty",
+                        "market_id": selected_market.market_id,
+                        "selected_window_id": selected_window_id,
+                        "capture_status": "valid_empty_book",
+                    },
+                ),
+                normalized_rows=(),
+                failure_class="valid_empty_book",
+                details={
+                    "selected_market_id": selected_market.market_id,
+                    "selected_market_slug": selected_market.market_slug,
+                    "selected_window_id": selected_window_id,
+                    "within_rollover_grace_window": False,
+                    "metadata_refresh_attempted": False,
+                    "metadata_refresh_changed_binding": False,
+                },
+            )
+        ),
+    )
+    monotonic_values = iter([0.0, 1.0, 61.0, 121.0, 181.0])
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    monkeypatch.setattr("rtds.collectors.phase1_capture.time.sleep", lambda seconds: None)
+
+    result = run_phase1_capture(
+        Phase1CaptureConfig(
+            data_root=tmp_path / "data",
+            artifacts_root=tmp_path / "artifacts",
+            logs_root=tmp_path / "logs",
+            temp_root=tmp_path / "tmp",
+            session_id="test-session",
+            capture_started_at=datetime(2026, 3, 13, 12, 5, 0, tzinfo=UTC),
+            duration_seconds=120.0,
+            poll_interval_seconds=60.0,
+            max_consecutive_polymarket_failures=1,
+        ),
+        logger=_logger(),
+    )
+
+    assert result.sample_count == 3
+    assert result.session_diagnostics.termination_reason == "completed"
+    assert result.session_diagnostics.max_consecutive_missing_by_source["polymarket_quotes"] == 0
+    assert result.session_diagnostics.polymarket_window_coverage[0]["valid_empty_book_samples"] == 3
+    assert result.session_diagnostics.polymarket_window_coverage[0]["window_verdict"] == "unusable"
 
 
 def test_run_with_retries_allows_http_payload_with_empty_error_list() -> None:
@@ -879,7 +989,7 @@ def test_run_phase1_capture_stops_when_polymarket_market_is_invalid_after_refres
     )
     assert diagnostics_row["sample_status"] == "failed"
     polymarket_diag = diagnostics_row["source_results"]["polymarket_quotes"]
-    assert polymarket_diag["failure_class"] == "terminal_invalid_market"
+    assert polymarket_diag["failure_class"] == "binding_invalid"
     assert polymarket_diag["details"]["metadata_refresh_attempted"] is True
 
 

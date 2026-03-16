@@ -27,12 +27,14 @@ from rtds.collectors.phase1_capture import (
     DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE,
     DEFAULT_MAX_CONSECUTIVE_SELECTION_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_UNUSABLE_POLYMARKET_WINDOWS,
     DEFAULT_MAX_FETCH_RETRIES,
     DEFAULT_METADATA_LIMIT,
     DEFAULT_METADATA_PAGES,
     DEFAULT_METADATA_POLL_INTERVAL_SECONDS,
     DEFAULT_POLYMARKET_QUOTE_POLL_INTERVAL_SECONDS,
     DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS,
+    DEFAULT_POLYMARKET_UNUSABLE_WINDOW_MIN_QUOTE_COVERAGE_RATIO,
     DEFAULT_TIMEOUT_SECONDS,
     Phase1CaptureConfig,
     run_phase1_capture,
@@ -61,6 +63,8 @@ def _capture_mode_defaults(mode: str) -> dict[str, object]:
             "max_consecutive_exchange_failures": 15,
             "max_consecutive_polymarket_failures": 15,
             "max_consecutive_polymarket_failures_in_grace": 30,
+            "max_consecutive_unusable_polymarket_windows": 2,
+            "polymarket_unusable_window_min_quote_coverage_ratio": 0.20,
         }
     if mode == CAPTURE_MODE_ADMISSION:
         return {
@@ -76,6 +80,8 @@ def _capture_mode_defaults(mode: str) -> dict[str, object]:
             "max_consecutive_exchange_failures": 15,
             "max_consecutive_polymarket_failures": 15,
             "max_consecutive_polymarket_failures_in_grace": 30,
+            "max_consecutive_unusable_polymarket_windows": 1,
+            "polymarket_unusable_window_min_quote_coverage_ratio": 0.50,
         }
     return {
         "metadata_poll_interval_seconds": DEFAULT_METADATA_POLL_INTERVAL_SECONDS,
@@ -93,6 +99,12 @@ def _capture_mode_defaults(mode: str) -> dict[str, object]:
         "max_consecutive_polymarket_failures": DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES,
         "max_consecutive_polymarket_failures_in_grace": (
             DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE
+        ),
+        "max_consecutive_unusable_polymarket_windows": (
+            DEFAULT_MAX_CONSECUTIVE_UNUSABLE_POLYMARKET_WINDOWS
+        ),
+        "polymarket_unusable_window_min_quote_coverage_ratio": (
+            DEFAULT_POLYMARKET_UNUSABLE_WINDOW_MIN_QUOTE_COVERAGE_RATIO
         ),
     }
 
@@ -120,6 +132,8 @@ def _resolve_capture_timing(args: argparse.Namespace) -> dict[str, object]:
         "max_consecutive_exchange_failures",
         "max_consecutive_polymarket_failures",
         "max_consecutive_polymarket_failures_in_grace",
+        "max_consecutive_unusable_polymarket_windows",
+        "polymarket_unusable_window_min_quote_coverage_ratio",
     ):
         value = getattr(args, key)
         if value is not None:
@@ -163,6 +177,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chainlink-poll-interval-seconds", type=float, default=None)
     parser.add_argument("--exchange-poll-interval-seconds", type=float, default=None)
     parser.add_argument("--polymarket-quote-poll-interval-seconds", type=float, default=None)
+    parser.add_argument("--max-consecutive-unusable-polymarket-windows", type=int, default=None)
+    parser.add_argument(
+        "--polymarket-unusable-window-min-quote-coverage-ratio",
+        type=float,
+        default=None,
+    )
     parser.add_argument(
         "--chainlink-source-preference",
         choices=("streams_public", "snapshot_rpc"),
@@ -326,6 +346,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_consecutive_polymarket_failures=int(timing["max_consecutive_polymarket_failures"]),
         max_consecutive_polymarket_failures_in_grace=int(
             timing["max_consecutive_polymarket_failures_in_grace"]
+        ),
+        max_consecutive_unusable_polymarket_windows=int(
+            timing["max_consecutive_unusable_polymarket_windows"]
+        ),
+        polymarket_unusable_window_min_quote_coverage_ratio=float(
+            timing["polymarket_unusable_window_min_quote_coverage_ratio"]
         ),
         polymarket_rollover_grace_seconds=args.polymarket_rollover_grace_seconds,
         boundary_burst_enabled=bool(timing["boundary_burst_enabled"]),

@@ -21,7 +21,7 @@ By default this is a one-shot capture pass, not a daemon. For bounded live work,
 - `pilot`: denser replay-admission validation
 - `admission`: same dense cadence profile intended for longer candidate-day work
 
-The `pilot` and `admission` presets also widen sample-based failure thresholds for Chainlink, exchange, and Polymarket so 1-second sampling does not abort on a few seconds of transient loss.
+The `pilot` and `admission` presets also widen sample-based failure thresholds for Chainlink, exchange, and Polymarket so 1-second sampling does not abort on a few seconds of transient loss. Pilot mode now also tolerates isolated unusable Polymarket windows better than admission mode, because the pilot is meant to finish and identify bad windows instead of dying on the first thin-book stretch.
 
 ## Deviation note
 
@@ -98,6 +98,8 @@ Optional resilience tuning:
   --max-backoff-seconds 5 \
   --max-consecutive-polymarket-failures 3 \
   --max-consecutive-polymarket-failures-in-grace 5 \
+  --max-consecutive-unusable-polymarket-windows 2 \
+  --polymarket-unusable-window-min-quote-coverage-ratio 0.2 \
   --polymarket-rollover-grace-seconds 90
 ```
 
@@ -142,6 +144,7 @@ Healthy collectors produce log lines showing:
 - capture-schedule details showing effective per-source interval and whether boundary burst mode is active for quote/oracle samples
 - retry warnings only when a source is recovering, not on every sample
 - degraded samples are logged explicitly when one source is temporarily impaired
+- Polymarket quote semantics are split between `valid_empty_book`, `quote_unavailable`, and `binding_invalid`
 - Polymarket 404s near rollover trigger metadata refresh and selector re-evaluation before the session treats the binding as invalid
 - one summary artifact path
 
@@ -179,6 +182,7 @@ For a smoke session, confirm:
 - `selector_diagnostics.selected_window_id` is a canonical `btc-5m-...` window
 - `session_diagnostics.empty_book_count`, `retry_count_by_source`, `retry_exhaustion_count_by_source`, and `termination_reason` are present in the summary artifact
 - `session_diagnostics.polymarket_failure_count_by_class`, `polymarket_selector_refresh_count`, `polymarket_selector_rebind_count`, and `polymarket_rollover_grace_sample_count` are present in the summary artifact
+- `session_diagnostics.polymarket_window_coverage` reports per-window quote coverage, empty-book counts, quote-unavailable counts, and a `good` / `degraded` / `unusable` verdict for each selected window
 - `data/raw/chainlink/...` has non-empty rows with stamped `recv_ts`
 - `data/normalized/chainlink_ticks/...` rows carry `oracle_source`, and boundary-validation runs should normally show `chainlink_stream_public_delayed`
 - `data/normalized/exchange_quotes/...` contains non-empty `binance`, `coinbase`, and `kraken` rows
@@ -193,6 +197,7 @@ For a hardened pilot, also confirm:
 - `admission_summary.json` now reports `chainlink_continuity.oracle_source_count` so the pilot can be judged on the actual oracle source used, not a generic Chainlink label
 - unit regression coverage now pins the public-stream boundary-validation baseline, including the cross-midnight admission rollup, zero off-family drift, explicit `chainlink_stream_public_delayed` lineage, nonzero anchor confidence, and nonzero snapshot eligibility
 - `sample_diagnostics.jsonl` shows 1-second effective `capture_interval_seconds` for `chainlink`, `exchange`, and `polymarket_quotes` during pilot/admission mode, with `boundary_burst_active` toggling near 5-minute boundaries
-- any `degraded_empty_book` sample does not terminate the session by itself
+- `valid_empty_book` samples do not terminate the session by themselves; they now degrade the current window instead of incrementing the same hard-stop counter used for quote-unavailable or binding-invalid states
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`
+- `admission_summary.json` now includes `empty_book_count_by_window`, `empty_book_count_by_slug`, and a per-window quote-coverage table with continuity flags plus `window_verdict`
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder

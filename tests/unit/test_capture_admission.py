@@ -40,6 +40,13 @@ def test_build_capture_admission_summary_reports_conditional_admission(tmp_path:
         "high": 3
     }
     assert summary["snapshot_eligibility"]["snapshot_eligible_sample_count"] == 3
+    assert summary["polymarket_continuity"]["empty_book_count_by_window"] == {
+        "btc-5m-20260315T133000Z": 1
+    }
+    assert summary["polymarket_continuity"]["window_verdict_counts"] == {
+        "degraded": 1,
+        "good": 2,
+    }
 
 
 def test_build_capture_admission_summary_flags_off_family_switches(tmp_path: Path) -> None:
@@ -439,6 +446,8 @@ def test_build_capture_admission_summary_preserves_public_stream_boundary_valida
     }
     assert summary["snapshot_eligibility"]["snapshot_eligible_sample_count"] == 3
     assert summary["snapshot_eligibility"]["snapshot_eligible_sample_ratio"] == 0.75
+    assert summary["polymarket_continuity"]["window_verdict_counts"] == {"good": 4}
+    assert summary["polymarket_continuity"]["window_quote_coverage"][0]["window_verdict"] == "good"
 
 
 def _capture_result(

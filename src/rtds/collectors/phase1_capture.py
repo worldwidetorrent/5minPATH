@@ -65,6 +65,8 @@ DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES = 3
 DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE = 5
+DEFAULT_MAX_CONSECUTIVE_UNUSABLE_POLYMARKET_WINDOWS = 1
+DEFAULT_POLYMARKET_UNUSABLE_WINDOW_MIN_QUOTE_COVERAGE_RATIO = 0.50
 DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS = 90.0
 DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS = 15.0
 DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS = 1.0
@@ -87,6 +89,9 @@ PART_FILE_NAME = "part-00000.jsonl"
 USER_AGENT = "testingproject-rtds/0.1.0"
 RETRYABLE_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 CORE_CAPTURE_SOURCES = ("chainlink", "exchange", "polymarket_quotes")
+POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK = "valid_empty_book"
+POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE = "quote_unavailable"
+POLYMARKET_FAILURE_CLASS_BINDING_INVALID = "binding_invalid"
 T = TypeVar("T")
 
 
@@ -120,6 +125,12 @@ class Phase1CaptureConfig:
     max_consecutive_polymarket_failures: int = DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES
     max_consecutive_polymarket_failures_in_grace: int = (
         DEFAULT_MAX_CONSECUTIVE_POLYMARKET_FAILURES_IN_GRACE
+    )
+    max_consecutive_unusable_polymarket_windows: int = (
+        DEFAULT_MAX_CONSECUTIVE_UNUSABLE_POLYMARKET_WINDOWS
+    )
+    polymarket_unusable_window_min_quote_coverage_ratio: float = (
+        DEFAULT_POLYMARKET_UNUSABLE_WINDOW_MIN_QUOTE_COVERAGE_RATIO
     )
     polymarket_rollover_grace_seconds: float = DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS
     boundary_burst_enabled: bool = False
@@ -264,6 +275,13 @@ class SessionDiagnostics:
     polymarket_rollover_grace_sample_count: int
     termination_reason: str
     sample_diagnostics_path: Path
+    polymarket_window_coverage: tuple[dict[str, object], ...] = ()
+    max_consecutive_unusable_polymarket_windows: int = (
+        DEFAULT_MAX_CONSECUTIVE_UNUSABLE_POLYMARKET_WINDOWS
+    )
+    polymarket_unusable_window_min_quote_coverage_ratio: float = (
+        DEFAULT_POLYMARKET_UNUSABLE_WINDOW_MIN_QUOTE_COVERAGE_RATIO
+    )
 
     def to_summary_dict(self) -> dict[str, object]:
         return {
@@ -286,6 +304,15 @@ class SessionDiagnostics:
             "polymarket_selector_refresh_count": self.polymarket_selector_refresh_count,
             "polymarket_selector_rebind_count": self.polymarket_selector_rebind_count,
             "polymarket_rollover_grace_sample_count": self.polymarket_rollover_grace_sample_count,
+            "polymarket_window_coverage": [
+                dict(window_coverage) for window_coverage in self.polymarket_window_coverage
+            ],
+            "max_consecutive_unusable_polymarket_windows": (
+                self.max_consecutive_unusable_polymarket_windows
+            ),
+            "polymarket_unusable_window_min_quote_coverage_ratio": (
+                self.polymarket_unusable_window_min_quote_coverage_ratio
+            ),
             "termination_reason": self.termination_reason,
             "sample_diagnostics_path": str(self.sample_diagnostics_path),
         }
@@ -349,6 +376,154 @@ class Phase1CaptureResult:
         }
 
 
+def _polymarket_failure_semantics(result: SourceCaptureResult) -> str | None:
+    """Collapse detailed Polymarket failures into runtime policy classes."""
+
+    if result.failure_class in {"degraded_empty_book", POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK}:
+        return POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
+    if result.failure_class in {
+        "retryable_http_404",
+        "retryable_http_5xx",
+        POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE,
+    }:
+        return POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE
+    if result.failure_class in {
+        "terminal_invalid_market",
+        "market_binding_stale",
+        POLYMARKET_FAILURE_CLASS_BINDING_INVALID,
+    }:
+        return POLYMARKET_FAILURE_CLASS_BINDING_INVALID
+    return None
+
+
+def _new_polymarket_window_coverage(window_id: str) -> dict[str, object]:
+    return {
+        "window_id": window_id,
+        "selected_market_ids": set(),
+        "selected_market_slugs": set(),
+        "total_samples": 0,
+        "samples_with_quote_rows": 0,
+        "valid_empty_book_samples": 0,
+        "quote_unavailable_samples": 0,
+        "binding_invalid_samples": 0,
+        "degraded_samples_inside_rollover_grace_window": 0,
+        "degraded_samples_outside_rollover_grace_window": 0,
+        "current_valid_empty_book_streak": 0,
+        "current_quote_unavailable_streak": 0,
+        "max_consecutive_valid_empty_book": 0,
+        "max_consecutive_quote_unavailable": 0,
+    }
+
+
+def _update_polymarket_window_coverage(
+    coverage: dict[str, object],
+    *,
+    selected_market_id: str,
+    selected_market_slug: str | None,
+    result: SourceCaptureResult,
+) -> None:
+    coverage["total_samples"] = int(coverage["total_samples"]) + 1
+    cast_ids = coverage["selected_market_ids"]
+    if isinstance(cast_ids, set):
+        cast_ids.add(selected_market_id)
+    cast_slugs = coverage["selected_market_slugs"]
+    if isinstance(cast_slugs, set) and selected_market_slug is not None:
+        cast_slugs.add(selected_market_slug)
+
+    details = result.details
+    within_grace = bool(details.get("within_rollover_grace_window"))
+    if len(result.normalized_rows) > 0:
+        coverage["samples_with_quote_rows"] = int(coverage["samples_with_quote_rows"]) + 1
+        coverage["current_valid_empty_book_streak"] = 0
+        coverage["current_quote_unavailable_streak"] = 0
+        return
+
+    semantics = _polymarket_failure_semantics(result)
+    if semantics == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK:
+        coverage["valid_empty_book_samples"] = int(coverage["valid_empty_book_samples"]) + 1
+        streak = int(coverage["current_valid_empty_book_streak"]) + 1
+        coverage["current_valid_empty_book_streak"] = streak
+        coverage["current_quote_unavailable_streak"] = 0
+        coverage["max_consecutive_valid_empty_book"] = max(
+            int(coverage["max_consecutive_valid_empty_book"]),
+            streak,
+        )
+    elif semantics == POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE:
+        coverage["quote_unavailable_samples"] = int(coverage["quote_unavailable_samples"]) + 1
+        streak = int(coverage["current_quote_unavailable_streak"]) + 1
+        coverage["current_quote_unavailable_streak"] = streak
+        coverage["current_valid_empty_book_streak"] = 0
+        coverage["max_consecutive_quote_unavailable"] = max(
+            int(coverage["max_consecutive_quote_unavailable"]),
+            streak,
+        )
+    elif semantics == POLYMARKET_FAILURE_CLASS_BINDING_INVALID:
+        coverage["binding_invalid_samples"] = int(coverage["binding_invalid_samples"]) + 1
+        streak = int(coverage["current_quote_unavailable_streak"]) + 1
+        coverage["current_quote_unavailable_streak"] = streak
+        coverage["current_valid_empty_book_streak"] = 0
+        coverage["max_consecutive_quote_unavailable"] = max(
+            int(coverage["max_consecutive_quote_unavailable"]),
+            streak,
+        )
+    else:
+        coverage["current_valid_empty_book_streak"] = 0
+        coverage["current_quote_unavailable_streak"] = 0
+
+    if within_grace:
+        coverage["degraded_samples_inside_rollover_grace_window"] = int(
+            coverage["degraded_samples_inside_rollover_grace_window"]
+        ) + 1
+    else:
+        coverage["degraded_samples_outside_rollover_grace_window"] = int(
+            coverage["degraded_samples_outside_rollover_grace_window"]
+        ) + 1
+
+
+def _finalize_polymarket_window_coverage(
+    coverage: dict[str, object],
+    *,
+    unusable_min_quote_coverage_ratio: float,
+) -> dict[str, object]:
+    total_samples = int(coverage["total_samples"])
+    quote_rows = int(coverage["samples_with_quote_rows"])
+    quote_coverage_ratio = (quote_rows / total_samples) if total_samples else 0.0
+    binding_invalid_samples = int(coverage["binding_invalid_samples"])
+    quote_unavailable_samples = int(coverage["quote_unavailable_samples"])
+    if (
+        binding_invalid_samples > 0
+        or quote_coverage_ratio < unusable_min_quote_coverage_ratio
+        or (quote_rows == 0 and total_samples > 0)
+    ):
+        window_verdict = "unusable"
+    elif quote_unavailable_samples > 0 or int(coverage["valid_empty_book_samples"]) > 0:
+        window_verdict = "degraded"
+    else:
+        window_verdict = "good"
+    return {
+        "window_id": str(coverage["window_id"]),
+        "selected_market_ids": sorted(str(value) for value in coverage["selected_market_ids"]),
+        "selected_market_slugs": sorted(str(value) for value in coverage["selected_market_slugs"]),
+        "total_samples": total_samples,
+        "samples_with_quote_rows": quote_rows,
+        "valid_empty_book_samples": int(coverage["valid_empty_book_samples"]),
+        "quote_unavailable_samples": quote_unavailable_samples,
+        "binding_invalid_samples": binding_invalid_samples,
+        "degraded_samples_inside_rollover_grace_window": int(
+            coverage["degraded_samples_inside_rollover_grace_window"]
+        ),
+        "degraded_samples_outside_rollover_grace_window": int(
+            coverage["degraded_samples_outside_rollover_grace_window"]
+        ),
+        "quote_coverage_ratio": quote_coverage_ratio,
+        "max_consecutive_valid_empty_book": int(coverage["max_consecutive_valid_empty_book"]),
+        "max_consecutive_quote_unavailable": int(
+            coverage["max_consecutive_quote_unavailable"]
+        ),
+        "window_verdict": window_verdict,
+    }
+
+
 def run_phase1_capture(
     config: Phase1CaptureConfig,
     *,
@@ -400,6 +575,10 @@ def run_phase1_capture(
     polymarket_selector_refresh_count = 0
     polymarket_selector_rebind_count = 0
     polymarket_rollover_grace_sample_count = 0
+    polymarket_window_coverage_by_window_id: dict[str, dict[str, object]] = {}
+    finalized_polymarket_window_coverage: list[dict[str, object]] = []
+    active_polymarket_window_id: str | None = None
+    consecutive_unusable_polymarket_windows = 0
     termination_reason = "completed"
 
     while True:
@@ -575,6 +754,32 @@ def run_phase1_capture(
         polymarket_result = polymarket_resolution.result
         if polymarket_result.details.get("within_rollover_grace_window"):
             polymarket_rollover_grace_sample_count += 1
+        if selected_window_id is not None:
+            window_coverage = polymarket_window_coverage_by_window_id.setdefault(
+                selected_window_id,
+                _new_polymarket_window_coverage(selected_window_id),
+            )
+            _update_polymarket_window_coverage(
+                window_coverage,
+                selected_market_id=sample_market.market_id,
+                selected_market_slug=sample_market.market_slug,
+                result=polymarket_result,
+            )
+            if active_polymarket_window_id is None:
+                active_polymarket_window_id = selected_window_id
+            elif active_polymarket_window_id != selected_window_id:
+                finalized_window = _finalize_polymarket_window_coverage(
+                    polymarket_window_coverage_by_window_id[active_polymarket_window_id],
+                    unusable_min_quote_coverage_ratio=(
+                        config.polymarket_unusable_window_min_quote_coverage_ratio
+                    ),
+                )
+                finalized_polymarket_window_coverage.append(finalized_window)
+                if finalized_window["window_verdict"] == "unusable":
+                    consecutive_unusable_polymarket_windows += 1
+                else:
+                    consecutive_unusable_polymarket_windows = 0
+                active_polymarket_window_id = selected_window_id
         source_results = {
             chainlink_result.source_name: chainlink_result,
             exchange_result.source_name: exchange_result,
@@ -592,6 +797,12 @@ def run_phase1_capture(
             if result.status == "not_due":
                 continue
             missing_output = len(result.normalized_rows) == 0
+            if (
+                source_name == "polymarket_quotes"
+                and _polymarket_failure_semantics(result)
+                == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
+            ):
+                missing_output = False
             if missing_output:
                 consecutive_missing_by_source[source_name] += 1
             else:
@@ -602,7 +813,10 @@ def run_phase1_capture(
             )
             last_capture_monotonic[source_name] = now_monotonic
 
-        if polymarket_result.status == "degraded_empty_book":
+        if (
+            _polymarket_failure_semantics(polymarket_result)
+            == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
+        ):
             empty_book_count += 1
 
         chainlink_raw.extend(chainlink_result.raw_rows)
@@ -618,7 +832,8 @@ def run_phase1_capture(
             if result.status not in {"success", "not_due"}
         )
         terminal_source_failure = any(
-            result.failure_class in {"terminal_invalid_market", "terminal_schema_failure"}
+            result.failure_class
+            in {POLYMARKET_FAILURE_CLASS_BINDING_INVALID, "terminal_schema_failure"}
             for result in source_results.values()
         )
         if degraded_sources:
@@ -646,7 +861,10 @@ def run_phase1_capture(
             >= config.max_consecutive_exchange_failures
         ):
             termination_reason = "exchange_failure_threshold_exceeded"
-        elif polymarket_result.failure_class == "terminal_invalid_market":
+        elif (
+            _polymarket_failure_semantics(polymarket_result)
+            == POLYMARKET_FAILURE_CLASS_BINDING_INVALID
+        ):
             termination_reason = "polymarket_market_invalid"
         elif polymarket_result.failure_class == "terminal_schema_failure":
             termination_reason = "polymarket_schema_failure"
@@ -660,6 +878,11 @@ def run_phase1_capture(
             )
         ):
             termination_reason = "polymarket_failure_threshold_exceeded"
+        elif (
+            consecutive_unusable_polymarket_windows
+            >= config.max_consecutive_unusable_polymarket_windows
+        ):
+            termination_reason = "polymarket_window_coverage_threshold_exceeded"
 
         sample_result = SampleDiagnostics(
             sample_index=sample_count,
@@ -693,6 +916,16 @@ def run_phase1_capture(
             break
         logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
         time.sleep(sleep_seconds)
+
+    if active_polymarket_window_id is not None:
+        finalized_polymarket_window_coverage.append(
+            _finalize_polymarket_window_coverage(
+                polymarket_window_coverage_by_window_id[active_polymarket_window_id],
+                unusable_min_quote_coverage_ratio=(
+                    config.polymarket_unusable_window_min_quote_coverage_ratio
+                ),
+            )
+        )
 
     collectors = (
         _write_dataset(
@@ -754,6 +987,18 @@ def run_phase1_capture(
         polymarket_selector_refresh_count=polymarket_selector_refresh_count,
         polymarket_selector_rebind_count=polymarket_selector_rebind_count,
         polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+        polymarket_window_coverage=tuple(
+            sorted(
+                finalized_polymarket_window_coverage,
+                key=lambda row: str(row["window_id"]),
+            )
+        ),
+        max_consecutive_unusable_polymarket_windows=(
+            config.max_consecutive_unusable_polymarket_windows
+        ),
+        polymarket_unusable_window_min_quote_coverage_ratio=(
+            config.polymarket_unusable_window_min_quote_coverage_ratio
+        ),
         termination_reason=termination_reason,
         sample_diagnostics_path=sample_diagnostics_path,
     )
@@ -1571,10 +1816,13 @@ def _collect_polymarket_quote(
                 ),
             ),
             normalized_rows=(),
-            failure_class="terminal_invalid_market",
+            failure_class=POLYMARKET_FAILURE_CLASS_BINDING_INVALID,
             failure_type="MissingTokenIds",
             failure_message="selected Polymarket market is missing CLOB token ids",
-            details=base_details,
+            details={
+                "quote_state": POLYMARKET_FAILURE_CLASS_BINDING_INVALID,
+                **base_details,
+            },
         )
 
     yes_url = config.polymarket_book_url_template.format(token_id=selected_market.token_yes_id)
@@ -1634,7 +1882,14 @@ def _collect_polymarket_quote(
             failure_type=failed_fetch.failure_type,
             failure_message=failed_fetch.failure_message,
             http_status=failed_fetch.http_status,
-            details=base_details,
+            details={
+                "quote_state": (
+                    POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE
+                    if failure_class == POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE
+                    else failure_class
+                ),
+                **base_details,
+            },
         )
 
     try:
@@ -1666,7 +1921,10 @@ def _collect_polymarket_quote(
             failure_class="terminal_schema_failure",
             failure_type=type(exc).__name__,
             failure_message=str(exc),
-            details=base_details,
+            details={
+                "quote_state": "schema_failure",
+                **base_details,
+            },
         )
     raw_payload = {
         "yes_book": yes_book_result.payload,
@@ -1681,7 +1939,7 @@ def _collect_polymarket_quote(
         )
         return SourceCaptureResult(
             source_name="polymarket_quotes",
-            status="degraded_empty_book",
+            status="degraded_valid_empty_book",
             raw_rows=(
                 {
                     "raw_event_id": (
@@ -1696,7 +1954,7 @@ def _collect_polymarket_quote(
                     "market_id": selected_market.market_id,
                     "token_yes_id": selected_market.token_yes_id,
                     "token_no_id": selected_market.token_no_id,
-                    "capture_status": "degraded_empty_book",
+                    "capture_status": POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK,
                     "empty_sides": list(empty_sides),
                     "selected_window_id": selected_window_id,
                     "selected_market_slug": selected_market.market_slug,
@@ -1706,8 +1964,9 @@ def _collect_polymarket_quote(
             ),
             normalized_rows=(),
             retries=total_retries,
-            failure_class="degraded_empty_book",
+            failure_class=POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK,
             details={
+                "quote_state": POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK,
                 "empty_sides": list(empty_sides),
                 **base_details,
             },
@@ -1735,7 +1994,10 @@ def _collect_polymarket_quote(
             failure_class="terminal_schema_failure",
             failure_type=type(exc).__name__,
             failure_message=str(exc),
-            details=base_details,
+            details={
+                "quote_state": "schema_failure",
+                **base_details,
+            },
         )
     raw_row = {
         "raw_event_id": quote.raw_event_id,
@@ -1760,7 +2022,10 @@ def _collect_polymarket_quote(
         raw_rows=(raw_row,),
         normalized_rows=(quote,),
         retries=total_retries,
-        details=base_details,
+        details={
+            "quote_state": "success",
+            **base_details,
+        },
     )
 
 
@@ -1911,7 +2176,7 @@ def _should_refresh_polymarket_binding(
     if result.failure_class in {"selector_refresh_required", "market_binding_stale"}:
         return True
     if (
-        result.status == "degraded_empty_book"
+        _polymarket_failure_semantics(result) == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
         and result.details.get("within_rollover_grace_window")
     ):
         return True
@@ -1928,19 +2193,19 @@ def _finalize_refreshed_polymarket_result(
         if within_rollover_grace_window:
             return replace(
                 result,
-                status="degraded_retryable_http_404",
-                failure_class="retryable_http_404",
+                status="degraded_quote_unavailable",
+                failure_class=POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE,
             )
         return replace(
             result,
             status="terminal_failure",
-            failure_class="terminal_invalid_market",
+            failure_class=POLYMARKET_FAILURE_CLASS_BINDING_INVALID,
         )
     if result.failure_class == "market_binding_stale" and not binding_changed:
         return replace(
             result,
             status="terminal_failure",
-            failure_class="terminal_invalid_market",
+            failure_class=POLYMARKET_FAILURE_CLASS_BINDING_INVALID,
         )
     return result
 
@@ -1964,10 +2229,10 @@ def _classify_polymarket_fetch_result(
             return "selector_refresh_required", "selector_refresh_required"
         return "terminal_failure", "market_binding_stale"
     if fetch_result.http_status in RETRYABLE_HTTP_STATUS_CODES:
-        return fetch_result.status, "retryable_http_5xx"
+        return fetch_result.status, POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE
     if fetch_result.status == "retry_exhausted":
-        return fetch_result.status, "retryable_http_5xx"
-    return fetch_result.status, "terminal_invalid_market"
+        return fetch_result.status, POLYMARKET_FAILURE_CLASS_QUOTE_UNAVAILABLE
+    return fetch_result.status, POLYMARKET_FAILURE_CLASS_BINDING_INVALID
 
 
 def _polymarket_rollover_context(

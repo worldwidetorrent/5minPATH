@@ -68,6 +68,8 @@ def test_resolve_capture_timing_uses_pilot_density_defaults() -> None:
             max_consecutive_exchange_failures=None,
             max_consecutive_polymarket_failures=None,
             max_consecutive_polymarket_failures_in_grace=None,
+            max_consecutive_unusable_polymarket_windows=None,
+            polymarket_unusable_window_min_quote_coverage_ratio=None,
         )
     )
 
@@ -80,4 +82,6 @@ def test_resolve_capture_timing_uses_pilot_density_defaults() -> None:
     assert timing["max_consecutive_exchange_failures"] == 15
     assert timing["max_consecutive_polymarket_failures"] == 15
     assert timing["max_consecutive_polymarket_failures_in_grace"] == 30
+    assert timing["max_consecutive_unusable_polymarket_windows"] == 2
+    assert timing["polymarket_unusable_window_min_quote_coverage_ratio"] == 0.20
     assert timing["poll_interval_seconds"] == 1.0
