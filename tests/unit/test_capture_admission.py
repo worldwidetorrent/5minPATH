@@ -244,6 +244,203 @@ def test_build_capture_admission_summary_maps_windows_across_utc_midnight(
     }
 
 
+def test_build_capture_admission_summary_preserves_public_stream_boundary_validation_baseline(
+    tmp_path: Path,
+) -> None:
+    capture_date = date(2026, 3, 15)
+    metadata_path = tmp_path / "data" / "normalized" / "market_metadata_events" / "part-00000.jsonl"
+    chainlink_path = tmp_path / "data" / "normalized" / "chainlink_ticks" / "part-00000.jsonl"
+    sample_diagnostics_path = tmp_path / "artifacts" / "collect" / "sample_diagnostics.jsonl"
+    summary_path = tmp_path / "artifacts" / "collect" / "summary.json"
+
+    markets = [
+        _metadata_candidate(
+            market_id="0x" + "a" * 64,
+            slug="btc-updown-5m-1773618900",
+            start_ts=datetime(2026, 3, 15, 23, 55, tzinfo=UTC),
+        ),
+        _metadata_candidate(
+            market_id="0x" + "b" * 64,
+            slug="btc-updown-5m-1773619200",
+            start_ts=datetime(2026, 3, 16, 0, 0, tzinfo=UTC),
+        ),
+        _metadata_candidate(
+            market_id="0x" + "c" * 64,
+            slug="btc-updown-5m-1773619500",
+            start_ts=datetime(2026, 3, 16, 0, 5, tzinfo=UTC),
+        ),
+        _metadata_candidate(
+            market_id="0x" + "d" * 64,
+            slug="btc-updown-5m-1773619800",
+            start_ts=datetime(2026, 3, 16, 0, 10, tzinfo=UTC),
+        ),
+    ]
+    write_jsonl_rows(metadata_path, markets)
+    write_jsonl_rows(
+        chainlink_path,
+        [
+            ChainlinkTick(
+                event_id="cl:235509",
+                event_ts=datetime(2026, 3, 15, 23, 55, 11, tzinfo=UTC),
+                price=Decimal("84000.00"),
+                recv_ts=datetime(2026, 3, 15, 23, 55, 11, tzinfo=UTC),
+                oracle_source="chainlink_stream_public_delayed",
+            ),
+            ChainlinkTick(
+                event_id="cl:000001",
+                event_ts=datetime(2026, 3, 16, 0, 0, 1, tzinfo=UTC),
+                price=Decimal("84010.00"),
+                recv_ts=datetime(2026, 3, 16, 0, 0, 1, tzinfo=UTC),
+                oracle_source="chainlink_stream_public_delayed",
+            ),
+            ChainlinkTick(
+                event_id="cl:000502",
+                event_ts=datetime(2026, 3, 16, 0, 5, 2, tzinfo=UTC),
+                price=Decimal("84020.00"),
+                recv_ts=datetime(2026, 3, 16, 0, 5, 2, tzinfo=UTC),
+                oracle_source="chainlink_stream_public_delayed",
+            ),
+            ChainlinkTick(
+                event_id="cl:001009",
+                event_ts=datetime(2026, 3, 16, 0, 10, 9, tzinfo=UTC),
+                price=Decimal("84030.00"),
+                recv_ts=datetime(2026, 3, 16, 0, 10, 9, tzinfo=UTC),
+                oracle_source="chainlink_stream_public_delayed",
+            ),
+        ],
+    )
+    write_jsonl_rows(
+        sample_diagnostics_path,
+        [
+            _sample(
+                index=1,
+                started_at=datetime(2026, 3, 15, 23, 58, 0, tzinfo=UTC),
+                market_id=markets[0].market_id,
+                slug=markets[0].market_slug,
+                window_id="btc-5m-20260315T235500Z",
+                chainlink_oracle_source="chainlink_stream_public_delayed",
+            ),
+            _sample(
+                index=2,
+                started_at=datetime(2026, 3, 16, 0, 0, 30, tzinfo=UTC),
+                market_id=markets[1].market_id,
+                slug=markets[1].market_slug,
+                window_id="btc-5m-20260316T000000Z",
+                chainlink_oracle_source="chainlink_stream_public_delayed",
+            ),
+            _sample(
+                index=3,
+                started_at=datetime(2026, 3, 16, 0, 5, 30, tzinfo=UTC),
+                market_id=markets[2].market_id,
+                slug=markets[2].market_slug,
+                window_id="btc-5m-20260316T000500Z",
+                chainlink_oracle_source="chainlink_stream_public_delayed",
+            ),
+            _sample(
+                index=4,
+                started_at=datetime(2026, 3, 16, 0, 10, 30, tzinfo=UTC),
+                market_id=markets[3].market_id,
+                slug=markets[3].market_slug,
+                window_id="btc-5m-20260316T001000Z",
+                chainlink_oracle_source="chainlink_stream_public_delayed",
+            ),
+        ],
+    )
+    write_json_file(summary_path, {"session_id": "test-session"})
+
+    result = Phase1CaptureResult(
+        session_id="test-session",
+        capture_date=capture_date,
+        selected_market_id=markets[0].market_id,
+        selected_market_slug=markets[0].market_slug,
+        selected_market_question=markets[0].market_question,
+        selected_window_id="btc-5m-20260315T235500Z",
+        selector_diagnostics=MetadataSelectionDiagnostics(
+            selected_market_id=markets[0].market_id,
+            selected_market_slug=markets[0].market_slug,
+            selected_window_id="btc-5m-20260315T235500Z",
+            candidate_count=4,
+            admitted_count=4,
+            rejected_count_by_reason={},
+        ),
+        duration_seconds=720.0,
+        poll_interval_seconds=1.0,
+        sample_count=4,
+        session_diagnostics=SessionDiagnostics(
+            degraded_sample_count=0,
+            failed_sample_count=0,
+            empty_book_count=0,
+            retry_count_by_source={},
+            retry_exhaustion_count_by_source={},
+            source_failure_count_by_source={},
+            max_consecutive_missing_by_source={"chainlink": 0, "polymarket_quotes": 0},
+            polymarket_failure_count_by_class={},
+            polymarket_selector_refresh_count=0,
+            polymarket_selector_rebind_count=0,
+            polymarket_rollover_grace_sample_count=0,
+            termination_reason="completed",
+            sample_diagnostics_path=sample_diagnostics_path,
+        ),
+        summary_path=summary_path,
+        collectors=(
+            CollectorArtifactSet(
+                collector_name="polymarket_metadata",
+                raw_path=tmp_path / "data" / "raw" / "polymarket_metadata" / "part-00000.jsonl",
+                normalized_path=metadata_path,
+                raw_row_count=4,
+                normalized_row_count=4,
+            ),
+            CollectorArtifactSet(
+                collector_name="chainlink",
+                raw_path=tmp_path / "data" / "raw" / "chainlink" / "part-00000.jsonl",
+                normalized_path=chainlink_path,
+                raw_row_count=4,
+                normalized_row_count=4,
+            ),
+            CollectorArtifactSet(
+                collector_name="exchange",
+                raw_path=tmp_path / "data" / "raw" / "exchange" / "part-00000.jsonl",
+                normalized_path=tmp_path
+                / "data"
+                / "normalized"
+                / "exchange_quotes"
+                / "part-00000.jsonl",
+                raw_row_count=12,
+                normalized_row_count=12,
+            ),
+            CollectorArtifactSet(
+                collector_name="polymarket_quotes",
+                raw_path=tmp_path / "data" / "raw" / "polymarket_quotes" / "part-00000.jsonl",
+                normalized_path=tmp_path
+                / "data"
+                / "normalized"
+                / "polymarket_quotes"
+                / "part-00000.jsonl",
+                raw_row_count=4,
+                normalized_row_count=4,
+            ),
+        ),
+    )
+
+    summary = build_capture_admission_summary(result)
+
+    assert summary["verdict"] == "conditionally_admissible"
+    assert summary["family_validation"]["off_family_switch_count"] == 0
+    assert summary["mapping_and_anchor"]["mapped_window_count"] == 4
+    assert summary["mapping_and_anchor"]["selected_binding_unresolved_window_count"] == 0
+    assert summary["mapping_and_anchor"]["anchor_assignment_confidence_breakdown"] == {
+        "high": 1,
+        "low": 1,
+        "medium": 1,
+        "none": 1,
+    }
+    assert summary["chainlink_continuity"]["oracle_source_count"] == {
+        "chainlink_stream_public_delayed": 4
+    }
+    assert summary["snapshot_eligibility"]["snapshot_eligible_sample_count"] == 3
+    assert summary["snapshot_eligibility"]["snapshot_eligible_sample_ratio"] == 0.75
+
+
 def _capture_result(
     tmp_path: Path,
     *,
@@ -436,6 +633,7 @@ def _sample(
     market_id: str,
     slug: str | None,
     window_id: str,
+    chainlink_oracle_source: str = "chainlink_snapshot_rpc",
     degraded: bool = False,
     within_grace: bool = False,
     refresh_attempted: bool = False,
@@ -456,6 +654,7 @@ def _sample(
                 status="success",
                 raw_rows=({"id": f"chainlink:{index}"},),
                 normalized_rows=({"id": f"chainlink:{index}"},),
+                details={"oracle_source": chainlink_oracle_source},
             ),
             "exchange": SourceCaptureResult(
                 source_name="exchange",
