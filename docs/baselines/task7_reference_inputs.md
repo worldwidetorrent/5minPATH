@@ -116,6 +116,22 @@ For each regime, compare:
 
 Do not switch back to ad hoc replay configs for this tranche.
 
+Focused degraded follow-up on the 12-hour pilot:
+
+```bash
+.venv/bin/python -m rtds.cli.analyze_degraded_regimes \
+  --date 2026-03-17 \
+  --session-id 20260317T033427850Z \
+  --config configs/replay/task7_reference_comparison.yaml \
+  --rebuild-reference true \
+  --rebuild-snapshots true
+```
+
+That follow-up keeps the same replay contract and adds two sanctioned overlays:
+
+- medium-specific execution stress for `degraded_light_only` and `degraded_medium_only`
+- context decomposition by `seconds_remaining_bucket`, `volatility_regime`, `spread_bucket`, `raw_edge_bucket`, `net_edge_bucket`, and `chainlink_confidence_state`
+
 ## Combined window-quality summary
 
 Rebuild one machine-readable summary with per-window verdicts for both reference runs:

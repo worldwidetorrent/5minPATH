@@ -266,3 +266,20 @@ Stress the same session under execution-sensitive degraded-regime assumptions wi
 - the default variants are `baseline_execution`, `slippage_1_5x`, `slippage_2x`, `half_size`, `tight_spread_cap_0_02`, `strict_quote_coverage_0_95`, and `degraded_light_candidate_policy`
 - use [`configs/replay/policies/good_only_baseline.yaml`](/home/ubuntu/testingproject/configs/replay/policies/good_only_baseline.yaml) as the first policy baseline
 - use [`configs/replay/policies/degraded_light_exploratory.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_light_exploratory.yaml) only as a second-tier exploratory overlay
+
+Run the focused degraded follow-up on the 12-hour reference session with:
+
+```bash
+.venv/bin/python -m rtds.cli.analyze_degraded_regimes \
+  --date 2026-03-17 \
+  --session-id 20260317T033427850Z \
+  --config configs/replay/task7_reference_comparison.yaml \
+  --rebuild-reference true \
+  --rebuild-snapshots true
+```
+
+- this writes `artifacts/replay_degraded_analysis/.../degraded_analysis_summary.json`
+- it focuses on `degraded_light_only` and `degraded_medium_only`
+- it stress-tests `baseline_execution`, `slippage_1_5x`, `slippage_2x`, and `half_size`
+- it decomposes both regimes by `seconds_remaining_bucket`, `volatility_regime`, `spread_bucket`, `raw_edge_bucket`, `net_edge_bucket`, and `chainlink_confidence_state`
+- current conclusion on the pinned 12-hour session: `degraded_medium` survives slippage stress but its strength concentrates in stronger-edge, wider-spread, and mid/high-volatility slices, so it remains exploratory rather than part of the first policy baseline
