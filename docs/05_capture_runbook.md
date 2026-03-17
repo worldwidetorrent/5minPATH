@@ -242,3 +242,19 @@ Use `snapshot_cadence_ms: 1000` for this baseline comparison so replay matches t
 - the comparison now runs these regimes: `good_only`, `degraded_only`, `degraded_light_only`, `degraded_light_plus_degraded_medium`, `all_degraded`, `good_plus_degraded_light`, `good_plus_degraded_light_plus_degraded_medium`, and `all_windows`
 - `admission_summary.json` is the source of truth for those window labels, and each selected window is now classified as `good`, `degraded_light`, `degraded_medium`, `degraded_heavy`, or `unusable`
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder
+
+Stress the same session under execution-sensitive degraded-regime assumptions with:
+
+```bash
+.venv/bin/python -m rtds.cli.compare_execution_sensitivity \
+  --date 2026-03-16 \
+  --session-id 20260316T101341416Z \
+  --config configs/replay/comparison_1s.yaml \
+  --rebuild-reference true \
+  --rebuild-snapshots true
+```
+
+- the execution-sensitivity matrix now writes `artifacts/replay_sensitivity/.../sensitivity_summary.json`
+- the default variants are `baseline_execution`, `slippage_1_5x`, `slippage_2x`, `half_size`, `tight_spread_cap_0_02`, `strict_quote_coverage_0_95`, and `degraded_light_candidate_policy`
+- use [`configs/replay/policies/good_only_baseline.yaml`](/home/ubuntu/testingproject/configs/replay/policies/good_only_baseline.yaml) as the first policy baseline
+- use [`configs/replay/policies/degraded_light_exploratory.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_light_exploratory.yaml) only as a second-tier exploratory overlay

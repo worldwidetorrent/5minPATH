@@ -1,0 +1,10 @@
+policy_name: good_only_baseline
+policy_role: baseline
+window_quality_regime: good
+min_net_edge: 0
+target_trade_size_contracts: 1
+slippage_multiplier_assumption: 1.0
+max_selected_spread_abs:
+minimum_window_quote_coverage_ratio:
+status: active_baseline
+notes: First calibration, threshold fitting, and no-trade rules must use good_only windows only.

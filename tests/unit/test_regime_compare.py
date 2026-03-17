@@ -15,6 +15,7 @@ from rtds.replay.regime_compare import (
     REGIME_GOOD_PLUS_DEGRADED_LIGHT,
     REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM,
     build_regime_result,
+    load_window_quality_rows,
     load_window_verdicts,
 )
 from rtds.replay.simulate import SimulatedTrade
@@ -39,6 +40,37 @@ def test_load_window_verdicts_reads_capture_admission_rows(tmp_path: Path) -> No
     verdicts = load_window_verdicts(admission_summary_path)
 
     assert verdicts == {"w1": "good", "w2": "degraded_light"}
+
+
+def test_load_window_quality_rows_reads_capture_admission_metrics(tmp_path: Path) -> None:
+    admission_summary_path = tmp_path / "admission_summary.json"
+    admission_summary_path.write_text(
+        json.dumps(
+            {
+                "polymarket_continuity": {
+                    "window_quote_coverage": [
+                        {
+                            "window_id": "w1",
+                            "window_verdict": "degraded_light",
+                            "quote_coverage_ratio": 0.94,
+                            "degraded_samples_outside_rollover_grace_window": 1,
+                            "max_consecutive_valid_empty_book": 2,
+                            "snapshot_eligible_ratio": 0.9,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = load_window_quality_rows(admission_summary_path)
+
+    assert rows["w1"].window_verdict == "degraded_light"
+    assert rows["w1"].quote_coverage_ratio == 0.94
+    assert rows["w1"].degraded_samples_outside_rollover_grace_window == 1
+    assert rows["w1"].max_consecutive_valid_empty_book == 2
+    assert rows["w1"].snapshot_eligible_ratio == 0.9
 
 
 def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> None:
@@ -98,6 +130,12 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
         "w3": "degraded_medium",
         "w4": "unusable",
     }
+    window_quality = {
+        "w1": SimpleNamespace(quote_coverage_ratio=0.99),
+        "w2": SimpleNamespace(quote_coverage_ratio=0.94),
+        "w3": SimpleNamespace(quote_coverage_ratio=0.84),
+        "w4": SimpleNamespace(quote_coverage_ratio=0.10),
+    }
 
     good_only = build_regime_result(
         rows,
@@ -133,6 +171,13 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
         rows,
         window_verdict_by_window=verdicts,
         regime_name=REGIME_ALL_WINDOWS,
+    )
+    strict_light = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_GOOD_PLUS_DEGRADED_LIGHT,
+        window_quality_by_window=window_quality,
+        minimum_window_quote_coverage_ratio=0.95,
     )
 
     assert good_only.snapshot_count == 1
@@ -182,6 +227,8 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
         all_windows.slices["composite_quality_state"][0]["slice_dimension"]
         == "composite_quality_state"
     )
+    assert strict_light.snapshot_count == 1
+    assert strict_light.window_verdict_counts == {"good": 1}
 
 
 def _evaluation_row(

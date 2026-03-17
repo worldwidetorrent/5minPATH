@@ -86,6 +86,18 @@ COMPARISON_SLICE_DIMENSIONS: tuple[str, ...] = (
 
 
 @dataclass(slots=True, frozen=True)
+class WindowQualityRow:
+    """Per-window quality row loaded from capture admission output."""
+
+    window_id: str
+    window_verdict: str
+    quote_coverage_ratio: float | None
+    degraded_samples_outside_rollover_grace_window: int
+    max_consecutive_valid_empty_book: int
+    snapshot_eligible_ratio: float | None
+
+
+@dataclass(slots=True, frozen=True)
 class ReplayRegimeResult:
     """One replay comparison regime summary plus selected slice tables."""
 
@@ -109,6 +121,15 @@ class ReplayRegimeResult:
 def load_window_verdicts(admission_summary_path: str | Path) -> dict[str, str]:
     """Load `window_id -> window_verdict` from one capture admission summary."""
 
+    return {
+        window_id: row.window_verdict
+        for window_id, row in load_window_quality_rows(admission_summary_path).items()
+    }
+
+
+def load_window_quality_rows(admission_summary_path: str | Path) -> dict[str, WindowQualityRow]:
+    """Load full per-window quality metadata from one capture admission summary."""
+
     payload = json.loads(Path(admission_summary_path).read_text(encoding="utf-8"))
     continuity = payload.get("polymarket_continuity", {})
     if not isinstance(continuity, Mapping):
@@ -116,15 +137,35 @@ def load_window_verdicts(admission_summary_path: str | Path) -> dict[str, str]:
     window_rows = continuity.get("window_quote_coverage", ())
     if not isinstance(window_rows, Sequence):
         return {}
-    verdicts: dict[str, str] = {}
+    loaded: dict[str, WindowQualityRow] = {}
     for row in window_rows:
         if not isinstance(row, Mapping):
             continue
         window_id = row.get("window_id")
         verdict = row.get("window_verdict")
-        if isinstance(window_id, str) and isinstance(verdict, str):
-            verdicts[window_id] = verdict
-    return verdicts
+        if not isinstance(window_id, str) or not isinstance(verdict, str):
+            continue
+        coverage = row.get("quote_coverage_ratio")
+        snapshot_eligible_ratio = row.get("snapshot_eligible_ratio")
+        loaded[window_id] = WindowQualityRow(
+            window_id=window_id,
+            window_verdict=verdict,
+            quote_coverage_ratio=(
+                float(coverage) if isinstance(coverage, int | float) else None
+            ),
+            degraded_samples_outside_rollover_grace_window=int(
+                row.get("degraded_samples_outside_rollover_grace_window", 0)
+            ),
+            max_consecutive_valid_empty_book=int(
+                row.get("max_consecutive_valid_empty_book", 0)
+            ),
+            snapshot_eligible_ratio=(
+                float(snapshot_eligible_ratio)
+                if isinstance(snapshot_eligible_ratio, int | float)
+                else None
+            ),
+        )
+    return loaded
 
 
 def filter_evaluation_rows_for_regime(
@@ -132,17 +173,29 @@ def filter_evaluation_rows_for_regime(
     *,
     window_verdict_by_window: Mapping[str, str],
     regime_name: str,
+    window_quality_by_window: Mapping[str, WindowQualityRow] | None = None,
+    minimum_window_quote_coverage_ratio: float | None = None,
 ) -> list[Any]:
     """Keep only evaluation rows admitted by the selected regime."""
 
     allowed_verdicts = REGIME_WINDOW_VERDICTS[regime_name]
-    if allowed_verdicts is None:
-        return list(evaluation_rows)
-    return [
-        row
-        for row in evaluation_rows
-        if window_verdict_by_window.get(row.snapshot.window_id, "unknown") in allowed_verdicts
-    ]
+    filtered_rows: list[Any] = []
+    for row in evaluation_rows:
+        window_id = row.snapshot.window_id
+        verdict = window_verdict_by_window.get(window_id, "unknown")
+        if allowed_verdicts is not None and verdict not in allowed_verdicts:
+            continue
+        if minimum_window_quote_coverage_ratio is not None:
+            quality_row = (
+                None
+                if window_quality_by_window is None
+                else window_quality_by_window.get(window_id)
+            )
+            coverage_ratio = None if quality_row is None else quality_row.quote_coverage_ratio
+            if coverage_ratio is None or coverage_ratio < minimum_window_quote_coverage_ratio:
+                continue
+        filtered_rows.append(row)
+    return filtered_rows
 
 
 def build_regime_result(
@@ -151,6 +204,9 @@ def build_regime_result(
     window_verdict_by_window: Mapping[str, str],
     regime_name: str,
     slice_policy: ReplaySlicePolicy = DEFAULT_REPLAY_SLICE_POLICY,
+    window_quality_by_window: Mapping[str, WindowQualityRow] | None = None,
+    minimum_window_quote_coverage_ratio: float | None = None,
+    include_slices: bool = True,
 ) -> ReplayRegimeResult:
     """Aggregate one replay regime from evaluated snapshot rows."""
 
@@ -158,6 +214,8 @@ def build_regime_result(
         evaluation_rows,
         window_verdict_by_window=window_verdict_by_window,
         regime_name=regime_name,
+        window_quality_by_window=window_quality_by_window,
+        minimum_window_quote_coverage_ratio=minimum_window_quote_coverage_ratio,
     )
     window_ids = sorted({row.snapshot.window_id for row in rows})
     window_verdict_counts = Counter(
@@ -174,21 +232,25 @@ def build_regime_result(
     average_selected_raw_edge = _average_decimal(selected_raw_edges)
     average_selected_net_edge = _average_decimal(selected_net_edges)
 
-    slice_inputs = [
-        ReplaySliceInput(
-            labeled_snapshot=row.labeled_snapshot,
-            executable_edge=row.edge,
-            simulated_trade=row.simulated_trade,
-            seconds_remaining=row.seconds_remaining,
-            sigma_eff=row.volatility.sigma_eff,
-        )
-        for row in rows
-    ]
-    slice_report = generate_replay_slices(slice_inputs, policy=slice_policy)
-    selected_slices = {
-        dimension: tuple(_slice_result_row(row) for row in slice_report.by_dimension[dimension])
-        for dimension in COMPARISON_SLICE_DIMENSIONS
-    }
+    selected_slices: dict[str, tuple[dict[str, object], ...]]
+    if include_slices:
+        slice_inputs = [
+            ReplaySliceInput(
+                labeled_snapshot=row.labeled_snapshot,
+                executable_edge=row.edge,
+                simulated_trade=row.simulated_trade,
+                seconds_remaining=row.seconds_remaining,
+                sigma_eff=row.volatility.sigma_eff,
+            )
+            for row in rows
+        ]
+        slice_report = generate_replay_slices(slice_inputs, policy=slice_policy)
+        selected_slices = {
+            dimension: tuple(_slice_result_row(row) for row in slice_report.by_dimension[dimension])
+            for dimension in COMPARISON_SLICE_DIMENSIONS
+        }
+    else:
+        selected_slices = {dimension: () for dimension in COMPARISON_SLICE_DIMENSIONS}
 
     return ReplayRegimeResult(
         regime_name=regime_name,
@@ -403,6 +465,7 @@ def _close_enough(left: ReplayRegimeResult, right: ReplayRegimeResult) -> bool:
 __all__ = [
     "COMPARISON_SLICE_DIMENSIONS",
     "DEFAULT_REGIME_ORDER",
+    "WindowQualityRow",
     "REGIME_ALL_DEGRADED",
     "REGIME_ALL_WINDOWS",
     "REGIME_DEGRADED_LIGHT_ONLY",
@@ -415,6 +478,7 @@ __all__ = [
     "ReplayRegimeResult",
     "build_regime_result",
     "filter_evaluation_rows_for_regime",
+    "load_window_quality_rows",
     "load_window_verdicts",
     "regime_result_to_dict",
     "render_regime_comparison_report",
