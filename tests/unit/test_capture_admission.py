@@ -18,6 +18,7 @@ from rtds.collectors.phase1_capture import (
     SourceCaptureResult,
 )
 from rtds.collectors.polymarket.metadata import MarketMetadataCandidate
+from rtds.collectors.window_quality import load_window_quality_classifier_policy
 from rtds.mapping.anchor_assignment import ChainlinkTick
 from rtds.storage.writer import write_json_file, write_jsonl_rows
 
@@ -455,6 +456,7 @@ def test_build_capture_admission_summary_preserves_public_stream_boundary_valida
 
 
 def test_finalize_window_summary_splits_degraded_windows_into_sub_buckets() -> None:
+    classifier_policy = load_window_quality_classifier_policy()
     light = _finalize_window_summary(
         _window_summary_stub(
             total_samples=10,
@@ -465,6 +467,7 @@ def test_finalize_window_summary_splits_degraded_windows_into_sub_buckets() -> N
             snapshot_eligible_samples=9,
         ),
         unusable_min_quote_coverage_ratio=0.2,
+        classifier_policy=classifier_policy,
     )
     medium = _finalize_window_summary(
         _window_summary_stub(
@@ -476,6 +479,7 @@ def test_finalize_window_summary_splits_degraded_windows_into_sub_buckets() -> N
             snapshot_eligible_samples=8,
         ),
         unusable_min_quote_coverage_ratio=0.2,
+        classifier_policy=classifier_policy,
     )
     heavy = _finalize_window_summary(
         _window_summary_stub(
@@ -487,6 +491,7 @@ def test_finalize_window_summary_splits_degraded_windows_into_sub_buckets() -> N
             snapshot_eligible_samples=6,
         ),
         unusable_min_quote_coverage_ratio=0.2,
+        classifier_policy=classifier_policy,
     )
 
     assert light["window_verdict"] == "degraded_light"
@@ -494,6 +499,22 @@ def test_finalize_window_summary_splits_degraded_windows_into_sub_buckets() -> N
     assert heavy["window_verdict"] == "degraded_heavy"
     assert light["snapshot_eligible_ratio"] == 0.9
     assert medium["quote_coverage_ratio"] == 0.9
+
+
+def test_capture_admission_emits_versioned_window_quality_classifier(tmp_path: Path) -> None:
+    summary = build_capture_admission_summary(_capture_result(tmp_path))
+
+    classifier = summary["polymarket_continuity"]["window_quality_classifier"]
+
+    assert classifier["classifier_version"] == "window_quality_v1"
+    assert classifier["config_path"] == "configs/replay/window_quality_classifier_v1.json"
+    assert classifier["label_order"] == [
+        "good",
+        "degraded_light",
+        "degraded_medium",
+        "degraded_heavy",
+        "unusable",
+    ]
 
 
 def test_resolve_selected_window_bindings_uses_final_sample_state_per_window(

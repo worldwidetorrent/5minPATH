@@ -52,6 +52,15 @@ Source of truth:
 
 - `artifacts/collect/.../admission_summary.json`
 - `polymarket_continuity.window_quote_coverage[*].window_verdict`
+- `polymarket_continuity.window_quality_classifier.classifier_version = window_quality_v1`
+- [`configs/replay/window_quality_classifier_v1.json`](/home/ubuntu/testingproject/configs/replay/window_quality_classifier_v1.json)
+
+The current classifier thresholds are explicit and versioned. They are keyed off:
+
+- `quote_coverage_ratio`
+- `degraded_samples_outside_rollover_grace_window`
+- `max_consecutive_valid_empty_book`
+- `snapshot_eligible_ratio`
 
 ## Frozen regime order
 
@@ -102,3 +111,16 @@ For each regime, compare:
 ```
 
 Do not switch back to ad hoc replay configs for this tranche.
+
+## Combined window-quality summary
+
+Rebuild one machine-readable summary with per-window verdicts for both reference runs:
+
+```bash
+.venv/bin/python -m rtds.cli.export_window_quality_summary \
+  --manifest-path configs/baselines/analysis/task7_reference_runs.json
+```
+
+That writes:
+
+- `artifacts/analysis/task7_reference_runs/window_quality_summary.json`

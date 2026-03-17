@@ -11,6 +11,11 @@ from typing import Any
 
 from rtds.collectors.phase1_capture import Phase1CaptureResult
 from rtds.collectors.polymarket.metadata import MarketMetadataCandidate
+from rtds.collectors.window_quality import (
+    WindowQualityClassifierPolicy,
+    load_window_quality_classifier_policy,
+    window_quality_classifier_policy_to_dict,
+)
 from rtds.core.enums import AssetCode, ConfidenceLevel
 from rtds.core.ids import build_window_id
 from rtds.core.time import parse_utc
@@ -27,14 +32,6 @@ ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.90
 CONDITIONALLY_ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.60
 ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 1
 CONDITIONALLY_ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 3
-LIGHT_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 1
-MEDIUM_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 4
-LIGHT_MAX_CONSECUTIVE_VALID_EMPTY_BOOK = 3
-MEDIUM_MAX_CONSECUTIVE_VALID_EMPTY_BOOK = 9
-LIGHT_MIN_QUOTE_COVERAGE_RATIO = 0.90
-MEDIUM_MIN_QUOTE_COVERAGE_RATIO = 0.80
-LIGHT_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.85
-MEDIUM_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.70
 
 
 @dataclass(slots=True, frozen=True)
@@ -69,6 +66,7 @@ def write_capture_admission_summary(result: Phase1CaptureResult) -> Path:
 def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, object]:
     """Build replay-admission diagnostics for one finished capture session."""
 
+    classifier_policy = load_window_quality_classifier_policy()
     sample_rows = _read_jsonl_rows(result.session_diagnostics.sample_diagnostics_path)
     sample_count = len(sample_rows)
     metadata_rows = _load_metadata_candidates(_collector_path(result, "polymarket_metadata"))
@@ -317,6 +315,7 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
         _finalize_window_summary(
             window_summary,
             unusable_min_quote_coverage_ratio=window_quote_coverage_threshold,
+            classifier_policy=classifier_policy,
         )
         for _, window_summary in sorted(polymarket_window_table.items())
     ]
@@ -401,32 +400,13 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
             ),
             "window_verdict_counts": dict(sorted(window_verdict_counts.items())),
             "window_quote_coverage": window_rows,
-            "window_quote_coverage_policy": {
-                "pilot_runtime_max_consecutive_unusable_windows": (
+            "window_quality_classifier": window_quality_classifier_policy_to_dict(
+                classifier_policy,
+                unusable_min_quote_coverage_ratio=window_quote_coverage_threshold,
+                pilot_runtime_max_consecutive_unusable_windows=(
                     result.session_diagnostics.max_consecutive_unusable_polymarket_windows
                 ),
-                "unusable_min_quote_coverage_ratio": window_quote_coverage_threshold,
-                "degraded_light_max_outside_grace_degraded_samples": (
-                    LIGHT_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
-                ),
-                "degraded_medium_max_outside_grace_degraded_samples": (
-                    MEDIUM_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
-                ),
-                "degraded_light_max_consecutive_valid_empty_book": (
-                    LIGHT_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
-                ),
-                "degraded_medium_max_consecutive_valid_empty_book": (
-                    MEDIUM_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
-                ),
-                "degraded_light_min_quote_coverage_ratio": LIGHT_MIN_QUOTE_COVERAGE_RATIO,
-                "degraded_medium_min_quote_coverage_ratio": MEDIUM_MIN_QUOTE_COVERAGE_RATIO,
-                "degraded_light_min_snapshot_eligible_ratio": (
-                    LIGHT_MIN_SNAPSHOT_ELIGIBLE_RATIO
-                ),
-                "degraded_medium_min_snapshot_eligible_ratio": (
-                    MEDIUM_MIN_SNAPSHOT_ELIGIBLE_RATIO
-                ),
-            },
+            ),
         },
         "chainlink_continuity": {
             "samples_with_ticks": chainlink_present_count,
@@ -563,6 +543,7 @@ def _finalize_window_summary(
     window_summary: dict[str, object],
     *,
     unusable_min_quote_coverage_ratio: float,
+    classifier_policy: WindowQualityClassifierPolicy,
 ) -> dict[str, object]:
     total_samples = int(window_summary["total_samples"])
     samples_with_quote_rows = int(window_summary["samples_with_quote_rows"])
@@ -594,22 +575,27 @@ def _finalize_window_summary(
     elif (
         quote_unavailable_samples > 0
         or degraded_samples_outside_rollover_grace_window
-        > MEDIUM_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
-        or max_consecutive_valid_empty_book > MEDIUM_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
-        or quote_coverage_ratio < MEDIUM_MIN_QUOTE_COVERAGE_RATIO
+        > classifier_policy.degraded_medium_max_outside_grace_degraded_samples
+        or max_consecutive_valid_empty_book
+        > classifier_policy.degraded_medium_max_consecutive_valid_empty_book
+        or quote_coverage_ratio < classifier_policy.degraded_medium_min_quote_coverage_ratio
         or (
             has_polymarket_degradation
-            and snapshot_eligible_ratio < MEDIUM_MIN_SNAPSHOT_ELIGIBLE_RATIO
+            and snapshot_eligible_ratio
+            < classifier_policy.degraded_medium_min_snapshot_eligible_ratio
         )
     ):
         window_verdict = "degraded_heavy"
     elif (
-        degraded_samples_outside_rollover_grace_window > LIGHT_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
-        or max_consecutive_valid_empty_book > LIGHT_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
-        or quote_coverage_ratio < LIGHT_MIN_QUOTE_COVERAGE_RATIO
+        degraded_samples_outside_rollover_grace_window
+        > classifier_policy.degraded_light_max_outside_grace_degraded_samples
+        or max_consecutive_valid_empty_book
+        > classifier_policy.degraded_light_max_consecutive_valid_empty_book
+        or quote_coverage_ratio < classifier_policy.degraded_light_min_quote_coverage_ratio
         or (
             has_polymarket_degradation
-            and snapshot_eligible_ratio < LIGHT_MIN_SNAPSHOT_ELIGIBLE_RATIO
+            and snapshot_eligible_ratio
+            < classifier_policy.degraded_light_min_snapshot_eligible_ratio
         )
     ):
         window_verdict = "degraded_medium"

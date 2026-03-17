@@ -1,0 +1,27 @@
+{
+  "classifier_version": "window_quality_v1",
+  "label_order": [
+    "good",
+    "degraded_light",
+    "degraded_medium",
+    "degraded_heavy",
+    "unusable"
+  ],
+  "verdict_rule_order": [
+    "unusable",
+    "degraded_heavy",
+    "degraded_medium",
+    "degraded_light",
+    "good"
+  ],
+  "thresholds": {
+    "degraded_light_max_outside_grace_degraded_samples": 1,
+    "degraded_medium_max_outside_grace_degraded_samples": 4,
+    "degraded_light_max_consecutive_valid_empty_book": 3,
+    "degraded_medium_max_consecutive_valid_empty_book": 9,
+    "degraded_light_min_quote_coverage_ratio": 0.9,
+    "degraded_medium_min_quote_coverage_ratio": 0.8,
+    "degraded_light_min_snapshot_eligible_ratio": 0.85,
+    "degraded_medium_min_snapshot_eligible_ratio": 0.7
+  }
+}
