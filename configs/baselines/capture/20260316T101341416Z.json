@@ -1,0 +1,22 @@
+{
+  "baseline_id": "capture-baseline-20260316T101341416Z",
+  "session_id": "20260316T101341416Z",
+  "capture_date": "2026-03-16",
+  "capture_mode": "pilot",
+  "oracle_source": "chainlink_stream_public_delayed",
+  "current_admission_verdict": "not_admissible",
+  "failure_reason": "degradation or snapshot coverage fell below conditional admission thresholds",
+  "known_caveat": "Widespread valid_empty_book degradation across many windows, with outside-rollover degraded samples above the current conditional threshold.",
+  "expected": {
+    "verdict": "not_admissible",
+    "termination_reason": "completed",
+    "off_family_switch_count": 0,
+    "selected_binding_unresolved_window_count": 0,
+    "min_mapped_window_count": 70,
+    "min_snapshot_eligible_sample_ratio": 0.9,
+    "min_high_medium_anchor_windows": 28,
+    "min_oracle_source_sample_count": 12000,
+    "min_good_window_count": 10,
+    "max_unusable_window_count": 0
+  }
+}

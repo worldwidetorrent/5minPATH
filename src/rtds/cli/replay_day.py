@@ -90,6 +90,7 @@ class ReplayRunConfig:
     """Effective configuration for one canonical replay run."""
 
     trade_date: date
+    session_id: str | None
     data_root: Path
     output_root: Path
     run_dir: Path
@@ -151,7 +152,11 @@ def run_replay_day(args: argparse.Namespace) -> Path:
     config = _build_effective_config(args, trade_date=trade_date, run_dir=run_dir)
     _write_effective_config(config)
 
-    chainlink_ticks = load_chainlink_ticks(config.data_root, date_utc=config.trade_date)
+    chainlink_ticks = load_chainlink_ticks(
+        config.data_root,
+        date_utc=config.trade_date,
+        session_id=config.session_id,
+    )
     references = _load_or_build_references(config, chainlink_ticks=chainlink_ticks)
     write_reference_artifacts(references, run_dir=config.run_dir)
 
@@ -319,6 +324,10 @@ def write_evaluation_artifacts(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", required=True, help="UTC trade date in YYYY-MM-DD form.")
+    parser.add_argument(
+        "--session-id",
+        help="Optional capture session id to replay one exact date/session partition.",
+    )
     parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--config")
@@ -350,6 +359,13 @@ def _build_effective_config(
     trade_date: date,
     run_dir: Path,
 ) -> ReplayRunConfig:
+    session_id = args.session_id.strip() if isinstance(args.session_id, str) else None
+    if session_id == "":
+        session_id = None
+    if session_id is not None and not bool(args.rebuild_reference):
+        raise ValueError("session-scoped replay requires --rebuild-reference true")
+    if session_id is not None and not bool(args.rebuild_snapshots):
+        raise ValueError("session-scoped replay requires --rebuild-snapshots true")
     defaults = _load_default_replay_config_files()
     for optional_path in (args.config, args.fee_config, args.slippage_config):
         if optional_path:
@@ -392,6 +408,7 @@ def _build_effective_config(
     )
     return ReplayRunConfig(
         trade_date=trade_date,
+        session_id=session_id,
         data_root=Path(args.data_root),
         output_root=Path(args.output_root),
         run_dir=run_dir,
@@ -442,6 +459,7 @@ def _build_effective_config(
 def _write_effective_config(config: ReplayRunConfig) -> None:
     payload = {
         "trade_date": config.trade_date.isoformat(),
+        "session_id": config.session_id,
         "data_root": str(config.data_root),
         "output_root": str(config.output_root),
         "run_dir": str(config.run_dir),
@@ -475,7 +493,11 @@ def _load_or_build_references(
             "no persisted window_reference rows found and rebuild_reference=false"
         )
 
-    candidates = load_metadata_candidates(config.data_root, date_utc=config.trade_date)
+    candidates = load_metadata_candidates(
+        config.data_root,
+        date_utc=config.trade_date,
+        session_id=config.session_id,
+    )
     windows = daily_window_schedule(config.trade_date)
     mapping_batch = map_candidates_to_windows(windows, candidates)
     references: list[WindowReferenceRecord] = []
@@ -506,10 +528,18 @@ def _load_or_build_snapshots(
         raise FileNotFoundError("no persisted snapshots found and rebuild_snapshots=false")
 
     exchange_quotes = sorted(
-        load_exchange_quotes(config.data_root, date_utc=config.trade_date),
+        load_exchange_quotes(
+            config.data_root,
+            date_utc=config.trade_date,
+            session_id=config.session_id,
+        ),
         key=lambda quote: quote.event_ts,
     )
-    polymarket_quotes = load_polymarket_quotes(config.data_root, date_utc=config.trade_date)
+    polymarket_quotes = load_polymarket_quotes(
+        config.data_root,
+        date_utc=config.trade_date,
+        session_id=config.session_id,
+    )
     polymarket_by_market: dict[str, list[Any]] = {}
     for quote in sorted(polymarket_quotes, key=lambda item: item.event_ts):
         polymarket_by_market.setdefault(quote.market_id, []).append(quote)

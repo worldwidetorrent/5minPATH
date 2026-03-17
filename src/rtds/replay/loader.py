@@ -32,29 +32,51 @@ def load_window_references(
     return [WindowReferenceRecord.from_storage_dict(row) for row in _read_jsonl_dir(root)]
 
 
-def load_exchange_quotes(data_root: str | Path, *, date_utc: date | str) -> list[ExchangeQuote]:
+def load_exchange_quotes(
+    data_root: str | Path,
+    *,
+    date_utc: date | str,
+    session_id: str | None = None,
+) -> list[ExchangeQuote]:
     """Load normalized exchange quotes for one UTC date."""
 
-    root = Path(data_root) / "normalized" / "exchange_quotes" / f"date={_normalize_date(date_utc)}"
+    root = _session_partition_root(
+        Path(data_root) / "normalized" / "exchange_quotes" / f"date={_normalize_date(date_utc)}",
+        session_id=session_id,
+    )
     return [_row_to_exchange_quote(row) for row in _read_jsonl_dir(root)]
 
 
-def load_polymarket_quotes(data_root: str | Path, *, date_utc: date | str) -> list[PolymarketQuote]:
+def load_polymarket_quotes(
+    data_root: str | Path,
+    *,
+    date_utc: date | str,
+    session_id: str | None = None,
+) -> list[PolymarketQuote]:
     """Load normalized Polymarket quotes for one UTC date."""
 
-    root = (
+    root = _session_partition_root(
         Path(data_root)
         / "normalized"
         / "polymarket_quotes"
-        / f"date={_normalize_date(date_utc)}"
+        / f"date={_normalize_date(date_utc)}",
+        session_id=session_id,
     )
     return [_row_to_polymarket_quote(row) for row in _read_jsonl_dir(root)]
 
 
-def load_chainlink_ticks(data_root: str | Path, *, date_utc: date | str) -> list[ChainlinkTick]:
+def load_chainlink_ticks(
+    data_root: str | Path,
+    *,
+    date_utc: date | str,
+    session_id: str | None = None,
+) -> list[ChainlinkTick]:
     """Load normalized Chainlink ticks for one UTC date."""
 
-    root = Path(data_root) / "normalized" / "chainlink_ticks" / f"date={_normalize_date(date_utc)}"
+    root = _session_partition_root(
+        Path(data_root) / "normalized" / "chainlink_ticks" / f"date={_normalize_date(date_utc)}",
+        session_id=session_id,
+    )
     return [_row_to_chainlink_tick(row) for row in _read_jsonl_dir(root)]
 
 
@@ -62,6 +84,7 @@ def load_metadata_candidates(
     data_root: str | Path,
     *,
     date_utc: date | str,
+    session_id: str | None = None,
 ) -> list[MarketMetadataCandidate]:
     """Load normalized Polymarket metadata candidates for one UTC date."""
 
@@ -72,7 +95,7 @@ def load_metadata_candidates(
         normalized_root / "polymarket_metadata" / partition,
     )
     for root in candidate_roots:
-        rows = _read_jsonl_dir(root)
+        rows = _read_jsonl_dir(_session_partition_root(root, session_id=session_id))
         if rows:
             return [_row_to_metadata_candidate(row) for row in rows]
     return []
@@ -114,6 +137,12 @@ def _normalize_date(value: date | str) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return date.fromisoformat(value).isoformat()
+
+
+def _session_partition_root(root: Path, *, session_id: str | None) -> Path:
+    if session_id is None:
+        return root
+    return root / f"session={session_id}"
 
 
 def _row_to_exchange_quote(row: dict[str, Any]) -> ExchangeQuote:

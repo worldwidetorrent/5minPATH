@@ -200,4 +200,30 @@ For a hardened pilot, also confirm:
 - `valid_empty_book` samples do not terminate the session by themselves; they now degrade the current window instead of incrementing the same hard-stop counter used for quote-unavailable or binding-invalid states
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`
 - `admission_summary.json` now includes `empty_book_count_by_window`, `empty_book_count_by_slug`, and a per-window quote-coverage table with continuity flags plus `window_verdict`
+
+## Pinned baseline session
+
+The current exploratory baseline session is:
+
+- [`20260316T101341416Z`](/home/ubuntu/testingproject/docs/baselines/20260316T101341416Z.md)
+
+Refresh its admission summary after code changes with:
+
+```bash
+.venv/bin/python -m rtds.cli.refresh_capture_admission \
+  --summary-path artifacts/collect/date=2026-03-16/session=20260316T101341416Z/summary.json \
+  --baseline-manifest configs/baselines/capture/20260316T101341416Z.json
+```
+
+Replay that exact session with:
+
+```bash
+.venv/bin/python -m rtds.cli.replay_day \
+  --date 2026-03-16 \
+  --session-id 20260316T101341416Z \
+  --rebuild-reference true \
+  --rebuild-snapshots true
+```
+
+`--session-id` matters here because replay otherwise reads the whole UTC date partition.
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder
