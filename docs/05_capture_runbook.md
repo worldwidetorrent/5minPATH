@@ -209,6 +209,10 @@ The current Task 7 reference sessions are:
 - [`20260317T033427850Z`](/home/ubuntu/testingproject/docs/baselines/20260317T033427850Z.md)
 - [`Task 7 Reference Inputs`](/home/ubuntu/testingproject/docs/baselines/task7_reference_inputs.md)
 
+The current semantic freeze for promotion to `main` is:
+
+- [`0005 Policy V1 And Admission V2`](/home/ubuntu/testingproject/docs/decisions/0005_policy_v1_and_admission_v2.md)
+
 The machine-readable manifest tying both sessions to one comparison contract is:
 
 - [`configs/baselines/analysis/task7_reference_runs.json`](/home/ubuntu/testingproject/configs/baselines/analysis/task7_reference_runs.json)
