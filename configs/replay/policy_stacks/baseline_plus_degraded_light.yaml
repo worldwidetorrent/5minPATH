@@ -1,0 +1,3 @@
+stack_name: baseline_plus_degraded_light
+stack_role: exploratory_overlay
+policy_paths: ["configs/replay/policies/good_only_baseline.yaml", "configs/replay/policies/degraded_light_exploratory.yaml"]

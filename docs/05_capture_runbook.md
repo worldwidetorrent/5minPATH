@@ -266,6 +266,7 @@ Stress the same session under execution-sensitive degraded-regime assumptions wi
 - the default variants are `baseline_execution`, `slippage_1_5x`, `slippage_2x`, `half_size`, `tight_spread_cap_0_02`, `strict_quote_coverage_0_95`, and `degraded_light_candidate_policy`
 - use [`configs/replay/policies/good_only_baseline.yaml`](/home/ubuntu/testingproject/configs/replay/policies/good_only_baseline.yaml) as the first policy baseline
 - use [`configs/replay/policies/degraded_light_exploratory.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_light_exploratory.yaml) only as a second-tier exploratory overlay
+- capture admission is now `v2`: `verdict` is continuity-first and window-aware, while the old blunt session-wide result remains in `legacy_verdict`
 
 Run the focused degraded follow-up on the 12-hour reference session with:
 
@@ -283,3 +284,19 @@ Run the focused degraded follow-up on the 12-hour reference session with:
 - it stress-tests `baseline_execution`, `slippage_1_5x`, `slippage_2x`, and `half_size`
 - it decomposes both regimes by `seconds_remaining_bucket`, `volatility_regime`, `spread_bucket`, `raw_edge_bucket`, `net_edge_bucket`, and `chainlink_confidence_state`
 - current conclusion on the pinned 12-hour session: `degraded_medium` survives slippage stress but its strength concentrates in stronger-edge, wider-spread, and mid/high-volatility slices, so it remains exploratory rather than part of the first policy baseline
+
+Run the window-aware policy stack on a pinned session with:
+
+```bash
+.venv/bin/python -m rtds.cli.compare_policy_stacks \
+  --date 2026-03-17 \
+  --session-id 20260317T033427850Z \
+  --config configs/replay/task7_reference_comparison.yaml \
+  --rebuild-reference true \
+  --rebuild-snapshots true
+```
+
+- this writes `artifacts/replay_policy_stack/.../policy_stack_summary.json`
+- the sanctioned stacks are [`baseline_only.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_only.yaml), [`baseline_plus_degraded_light.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_plus_degraded_light.yaml), and [`baseline_plus_degraded_light_gated_medium.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_plus_degraded_light_gated_medium.yaml)
+- the sanctioned policy configs are [`good_only_baseline.yaml`](/home/ubuntu/testingproject/configs/replay/policies/good_only_baseline.yaml), [`degraded_light_exploratory.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_light_exploratory.yaml), and [`degraded_medium_context_gated.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_medium_context_gated.yaml)
+- current result across the pinned 6-hour and 12-hour sessions: `good` remains the clean baseline universe, `degraded_light` is a measurable exploratory overlay, and gated `degraded_medium` adds only a narrow extra slice rather than a new default trading universe

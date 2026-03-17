@@ -195,6 +195,16 @@ def generate_replay_slices(
     )
 
 
+def classify_replay_slice_input(
+    slice_input: ReplaySliceInput,
+    *,
+    policy: ReplaySlicePolicy = DEFAULT_REPLAY_SLICE_POLICY,
+) -> dict[str, str]:
+    """Classify one replay row into the canonical slice buckets."""
+
+    return _slice_values(slice_input, policy=policy)
+
+
 def _slice_values(
     slice_input: ReplaySliceInput,
     *,
@@ -393,6 +403,7 @@ def _spread_bucket(value: Decimal | None, *, policy: ReplaySlicePolicy) -> str:
 
 __all__ = [
     "CHAINLINK_CONFIDENCE_DIMENSION",
+    "classify_replay_slice_input",
     "COMPOSITE_QUALITY_DIMENSION",
     "DEFAULT_REPLAY_SLICE_POLICY",
     "NET_EDGE_DIMENSION",

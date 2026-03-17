@@ -32,6 +32,7 @@ ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.90
 CONDITIONALLY_ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.60
 ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 1
 CONDITIONALLY_ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 3
+ADMISSION_SEMANTICS_VERSION = "v2"
 
 
 @dataclass(slots=True, frozen=True)
@@ -298,19 +299,10 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
     snapshot_eligible_ratio = (
         snapshot_eligible_sample_count / sample_count if sample_count else 0.0
     )
-
-    verdict, verdict_reasons = _classify_admission_verdict(
-        termination_reason=result.session_diagnostics.termination_reason,
-        off_family_switch_count=off_family_switch_count,
-        failed_sample_count=failed_sample_count,
-        degraded_ratio=degraded_ratio,
-        degraded_outside_grace=degraded_outside_grace,
-        snapshot_eligible_ratio=snapshot_eligible_ratio,
-        sample_count=sample_count,
-    )
     window_quote_coverage_threshold = (
         result.session_diagnostics.polymarket_unusable_window_min_quote_coverage_ratio
     )
+
     window_rows = [
         _finalize_window_summary(
             window_summary,
@@ -321,12 +313,62 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
     ]
     window_verdict_counts = Counter(row["window_verdict"] for row in window_rows)
 
+    continuity = _session_continuity_summary(
+        termination_reason=result.session_diagnostics.termination_reason,
+        off_family_switch_count=off_family_switch_count,
+        failed_sample_count=failed_sample_count,
+        unresolved_binding_window_count=len(selected_bindings.unresolved_window_ids),
+        sample_count=sample_count,
+        chainlink_present_count=chainlink_present_count,
+        samples_with_all_exchange_venues=samples_with_all_exchange_venues,
+        snapshot_eligible_ratio=snapshot_eligible_ratio,
+    )
+    verdict, verdict_reasons = _classify_admission_verdict_v2(
+        continuity=continuity,
+        snapshot_eligible_ratio=snapshot_eligible_ratio,
+        window_verdict_counts=window_verdict_counts,
+    )
+    legacy_verdict, legacy_verdict_reasons = _classify_admission_verdict_legacy(
+        termination_reason=result.session_diagnostics.termination_reason,
+        off_family_switch_count=off_family_switch_count,
+        failed_sample_count=failed_sample_count,
+        degraded_ratio=degraded_ratio,
+        degraded_outside_grace=degraded_outside_grace,
+        snapshot_eligible_ratio=snapshot_eligible_ratio,
+        sample_count=sample_count,
+    )
+    window_inclusion_modes = _window_inclusion_modes(window_rows)
+
     return {
         "session_id": result.session_id,
         "capture_date": result.capture_date.isoformat(),
         "verdict": verdict,
         "verdict_reasons": verdict_reasons,
+        "verdict_semantics_version": ADMISSION_SEMANTICS_VERSION,
         "verdict_policy": {
+            "semantics_version": ADMISSION_SEMANTICS_VERSION,
+            "session_level_continuity_required": True,
+            "admissible_min_snapshot_eligible_ratio": (
+                ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO
+            ),
+            "conditionally_admissible_min_snapshot_eligible_ratio": (
+                CONDITIONALLY_ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO
+            ),
+            "admissible_excluded_window_verdicts": [],
+            "conditionally_admissible_excluded_window_verdicts": [
+                "degraded_heavy",
+                "unusable",
+            ],
+            "window_inclusion_modes": {
+                "baseline": ["good"],
+                "exploratory_overlay": ["good", "degraded_light"],
+                "context_gate_required": ["degraded_medium"],
+                "excluded": ["degraded_heavy", "unusable"],
+            },
+        },
+        "legacy_verdict": legacy_verdict,
+        "legacy_verdict_reasons": legacy_verdict_reasons,
+        "legacy_verdict_policy": {
             "admissible_max_degraded_ratio": ADMISSIBLE_MAX_DEGRADED_RATIO,
             "conditionally_admissible_max_degraded_ratio": (
                 CONDITIONALLY_ADMISSIBLE_MAX_DEGRADED_RATIO
@@ -344,6 +386,7 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
                 CONDITIONALLY_ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
             ),
         },
+        "session_continuity": continuity,
         "sample_counts": {
             "total_samples": sample_count,
             "healthy_samples": healthy_sample_count,
@@ -400,6 +443,7 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
             ),
             "window_verdict_counts": dict(sorted(window_verdict_counts.items())),
             "window_quote_coverage": window_rows,
+            "window_inclusion_modes": window_inclusion_modes,
             "window_quality_classifier": window_quality_classifier_policy_to_dict(
                 classifier_policy,
                 unusable_min_quote_coverage_ratio=window_quote_coverage_threshold,
@@ -480,6 +524,27 @@ def _classify_admission_verdict(
     snapshot_eligible_ratio: float,
     sample_count: int,
 ) -> tuple[str, list[str]]:
+    return _classify_admission_verdict_legacy(
+        termination_reason=termination_reason,
+        off_family_switch_count=off_family_switch_count,
+        failed_sample_count=failed_sample_count,
+        degraded_ratio=degraded_ratio,
+        degraded_outside_grace=degraded_outside_grace,
+        snapshot_eligible_ratio=snapshot_eligible_ratio,
+        sample_count=sample_count,
+    )
+
+
+def _classify_admission_verdict_legacy(
+    *,
+    termination_reason: str,
+    off_family_switch_count: int,
+    failed_sample_count: int,
+    degraded_ratio: float,
+    degraded_outside_grace: int,
+    snapshot_eligible_ratio: float,
+    sample_count: int,
+) -> tuple[str, list[str]]:
     reasons: list[str] = []
     if termination_reason != "completed":
         reasons.append(f"session terminated early: {termination_reason}")
@@ -518,6 +583,123 @@ def _classify_admission_verdict(
             "degradation or snapshot coverage fell below conditional admission thresholds"
         )
     return "not_admissible", reasons
+
+
+def _classify_admission_verdict_v2(
+    *,
+    continuity: dict[str, object],
+    snapshot_eligible_ratio: float,
+    window_verdict_counts: Counter[str],
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    if not bool(continuity.get("completed")):
+        reasons.append("session did not complete")
+    if not bool(continuity.get("family_continuity_pass")):
+        reasons.append("off-family drift detected")
+    if not bool(continuity.get("selected_binding_continuity_pass")):
+        reasons.append("selected binding continuity failed")
+    if not bool(continuity.get("oracle_continuity_pass")):
+        reasons.append("oracle continuity failed")
+    if not bool(continuity.get("exchange_continuity_pass")):
+        reasons.append("exchange continuity failed")
+    if not bool(continuity.get("failed_sample_free")):
+        reasons.append("failed samples present")
+    if not bool(continuity.get("has_samples")):
+        reasons.append("capture produced zero samples")
+    if reasons:
+        return "not_admissible", reasons
+
+    excluded_windows = int(window_verdict_counts.get("degraded_heavy", 0)) + int(
+        window_verdict_counts.get("unusable", 0)
+    )
+    if (
+        snapshot_eligible_ratio >= ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO
+        and excluded_windows == 0
+    ):
+        return "admissible", [
+            (
+                "session continuity passed and all observed windows stayed within "
+                "baseline or gated exploratory regimes"
+            )
+        ]
+    if snapshot_eligible_ratio >= CONDITIONALLY_ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO:
+        return "conditionally_admissible", [
+            (
+                "session continuity passed; include or exclude windows using the "
+                "window-quality policy modes"
+            )
+        ]
+    return "not_admissible", [
+        (
+            "session continuity passed, but snapshot eligibility stayed below the "
+            "exploratory admission floor"
+        )
+    ]
+
+
+def _session_continuity_summary(
+    *,
+    termination_reason: str,
+    off_family_switch_count: int,
+    failed_sample_count: int,
+    unresolved_binding_window_count: int,
+    sample_count: int,
+    chainlink_present_count: int,
+    samples_with_all_exchange_venues: int,
+    snapshot_eligible_ratio: float,
+) -> dict[str, object]:
+    return {
+        "has_samples": sample_count > 0,
+        "completed": termination_reason == "completed",
+        "family_continuity_pass": off_family_switch_count == 0,
+        "selected_binding_continuity_pass": unresolved_binding_window_count == 0,
+        "oracle_continuity_pass": sample_count > 0 and chainlink_present_count == sample_count,
+        "exchange_continuity_pass": (
+            sample_count > 0 and samples_with_all_exchange_venues == sample_count
+        ),
+        "failed_sample_free": failed_sample_count == 0,
+        "snapshot_eligibility_strong": (
+            snapshot_eligible_ratio >= ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO
+        ),
+        "snapshot_eligibility_exploratory": (
+            snapshot_eligible_ratio >= CONDITIONALLY_ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO
+        ),
+    }
+
+
+def _window_inclusion_modes(window_rows: list[dict[str, object]]) -> dict[str, object]:
+    baseline_count = 0
+    exploratory_count = 0
+    context_gate_count = 0
+    excluded_count = 0
+    annotated_rows: list[dict[str, object]] = []
+    for row in window_rows:
+        verdict = str(row["window_verdict"])
+        baseline_include = verdict == "good"
+        exploratory_include = verdict in {"good", "degraded_light"}
+        context_gate_required = verdict == "degraded_medium"
+        excluded = verdict in {"degraded_heavy", "unusable"}
+        baseline_count += int(baseline_include)
+        exploratory_count += int(exploratory_include)
+        context_gate_count += int(context_gate_required)
+        excluded_count += int(excluded)
+        annotated_rows.append(
+            {
+                "window_id": row["window_id"],
+                "window_verdict": verdict,
+                "baseline_include": baseline_include,
+                "exploratory_include": exploratory_include,
+                "context_gate_required": context_gate_required,
+                "excluded": excluded,
+            }
+        )
+    return {
+        "baseline_window_count": baseline_count,
+        "exploratory_window_count": exploratory_count,
+        "context_gate_window_count": context_gate_count,
+        "excluded_window_count": excluded_count,
+        "windows": annotated_rows,
+    }
 
 
 def _polymarket_failure_semantics(result: dict[str, Any]) -> str | None:

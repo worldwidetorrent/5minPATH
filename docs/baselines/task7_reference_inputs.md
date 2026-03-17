@@ -132,6 +132,29 @@ That follow-up keeps the same replay contract and adds two sanctioned overlays:
 - medium-specific execution stress for `degraded_light_only` and `degraded_medium_only`
 - context decomposition by `seconds_remaining_bucket`, `volatility_regime`, `spread_bucket`, `raw_edge_bucket`, `net_edge_bucket`, and `chainlink_confidence_state`
 
+Window-aware policy-stack comparison on the pinned sessions:
+
+```bash
+.venv/bin/python -m rtds.cli.compare_policy_stacks \
+  --date 2026-03-17 \
+  --session-id 20260317T033427850Z \
+  --config configs/replay/task7_reference_comparison.yaml \
+  --rebuild-reference true \
+  --rebuild-snapshots true
+```
+
+That comparison uses three sanctioned stack configs:
+
+- [`baseline_only.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_only.yaml)
+- [`baseline_plus_degraded_light.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_plus_degraded_light.yaml)
+- [`baseline_plus_degraded_light_gated_medium.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_plus_degraded_light_gated_medium.yaml)
+
+The current policy stance those stacks encode is:
+
+- baseline: [`good_only_baseline.yaml`](/home/ubuntu/testingproject/configs/replay/policies/good_only_baseline.yaml)
+- exploratory light overlay: [`degraded_light_exploratory.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_light_exploratory.yaml)
+- exploratory medium gate: [`degraded_medium_context_gated.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_medium_context_gated.yaml)
+
 ## Combined window-quality summary
 
 Rebuild one machine-readable summary with per-window verdicts for both reference runs:

@@ -1,0 +1,16 @@
+policy_name: degraded_medium_context_gated
+policy_role: exploratory_context_gate
+window_quality_regime: degraded_medium
+min_net_edge: 0.03
+target_trade_size_contracts: 0.5
+slippage_multiplier_assumption: 1.5
+max_selected_spread_abs:
+minimum_window_quote_coverage_ratio: 0.85
+required_seconds_remaining_buckets: []
+required_volatility_regimes: ["mid_vol", "high_vol"]
+required_spread_buckets: ["wide_spread"]
+required_raw_edge_buckets: []
+required_net_edge_buckets: ["large_positive_edge"]
+required_chainlink_confidence_states: []
+status: exploratory_only
+notes: Admit degraded_medium only in stronger dislocation slices with large positive net edge, mid/high volatility, and wide spreads.

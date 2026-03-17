@@ -1,0 +1,3 @@
+stack_name: baseline_only
+stack_role: baseline
+policy_paths: ["configs/replay/policies/good_only_baseline.yaml"]
