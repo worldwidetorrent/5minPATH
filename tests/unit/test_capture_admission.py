@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from rtds.collectors.admission_summary import (
+    _finalize_window_summary,
     build_capture_admission_summary,
     resolve_selected_window_bindings,
 )
@@ -47,7 +48,7 @@ def test_build_capture_admission_summary_reports_conditional_admission(tmp_path:
         "btc-5m-20260315T133000Z": 1
     }
     assert summary["polymarket_continuity"]["window_verdict_counts"] == {
-        "degraded": 1,
+        "degraded_heavy": 1,
         "good": 2,
     }
 
@@ -453,6 +454,48 @@ def test_build_capture_admission_summary_preserves_public_stream_boundary_valida
     assert summary["polymarket_continuity"]["window_quote_coverage"][0]["window_verdict"] == "good"
 
 
+def test_finalize_window_summary_splits_degraded_windows_into_sub_buckets() -> None:
+    light = _finalize_window_summary(
+        _window_summary_stub(
+            total_samples=10,
+            samples_with_quote_rows=9,
+            valid_empty_book_samples=1,
+            degraded_samples_outside_rollover_grace_window=0,
+            max_consecutive_valid_empty_book=1,
+            snapshot_eligible_samples=9,
+        ),
+        unusable_min_quote_coverage_ratio=0.2,
+    )
+    medium = _finalize_window_summary(
+        _window_summary_stub(
+            total_samples=10,
+            samples_with_quote_rows=9,
+            valid_empty_book_samples=1,
+            degraded_samples_outside_rollover_grace_window=2,
+            max_consecutive_valid_empty_book=4,
+            snapshot_eligible_samples=8,
+        ),
+        unusable_min_quote_coverage_ratio=0.2,
+    )
+    heavy = _finalize_window_summary(
+        _window_summary_stub(
+            total_samples=10,
+            samples_with_quote_rows=7,
+            valid_empty_book_samples=3,
+            degraded_samples_outside_rollover_grace_window=5,
+            max_consecutive_valid_empty_book=10,
+            snapshot_eligible_samples=6,
+        ),
+        unusable_min_quote_coverage_ratio=0.2,
+    )
+
+    assert light["window_verdict"] == "degraded_light"
+    assert medium["window_verdict"] == "degraded_medium"
+    assert heavy["window_verdict"] == "degraded_heavy"
+    assert light["snapshot_eligible_ratio"] == 0.9
+    assert medium["quote_coverage_ratio"] == 0.9
+
+
 def test_resolve_selected_window_bindings_uses_final_sample_state_per_window(
     tmp_path: Path,
 ) -> None:
@@ -730,6 +773,39 @@ def _sample(
         },
     )
     return sample.to_summary_dict()
+
+
+def _window_summary_stub(
+    *,
+    total_samples: int,
+    samples_with_quote_rows: int,
+    valid_empty_book_samples: int,
+    degraded_samples_outside_rollover_grace_window: int,
+    max_consecutive_valid_empty_book: int,
+    snapshot_eligible_samples: int,
+) -> dict[str, object]:
+    return {
+        "window_id": "btc-5m-20260315T133000Z",
+        "selected_market_ids": {"0x" + "1" * 64},
+        "selected_market_slugs": {"btc-updown-5m-1773581400"},
+        "family_continuity_pass": True,
+        "oracle_continuity_pass": True,
+        "exchange_continuity_pass": True,
+        "total_samples": total_samples,
+        "samples_with_quote_rows": samples_with_quote_rows,
+        "valid_empty_book_samples": valid_empty_book_samples,
+        "quote_unavailable_samples": 0,
+        "binding_invalid_samples": 0,
+        "degraded_samples_inside_rollover_grace_window": valid_empty_book_samples,
+        "degraded_samples_outside_rollover_grace_window": (
+            degraded_samples_outside_rollover_grace_window
+        ),
+        "current_valid_empty_book_streak": 0,
+        "current_quote_unavailable_streak": 0,
+        "max_consecutive_valid_empty_book": max_consecutive_valid_empty_book,
+        "max_consecutive_quote_unavailable": 0,
+        "snapshot_eligible_samples": snapshot_eligible_samples,
+    }
 
 
 def _metadata_candidate(

@@ -127,7 +127,12 @@ def test_validate_admission_summary_against_baseline_accepts_pinned_expectations
             "oracle_source_count": {"chainlink_stream_public_delayed": 12575}
           },
           "polymarket_continuity": {
-            "window_verdict_counts": {"good": 12, "degraded": 61}
+            "window_verdict_counts": {
+              "good": 12,
+              "degraded_light": 20,
+              "degraded_medium": 21,
+              "degraded_heavy": 20
+            }
           }
         }
         """

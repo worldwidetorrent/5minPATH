@@ -8,8 +8,12 @@ from types import SimpleNamespace
 
 from rtds.replay.regime_compare import (
     REGIME_ALL_WINDOWS,
+    REGIME_DEGRADED_LIGHT_ONLY,
+    REGIME_DEGRADED_LIGHT_PLUS_MEDIUM,
+    REGIME_DEGRADED_ONLY,
     REGIME_GOOD_ONLY,
-    REGIME_GOOD_PLUS_DEGRADED,
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT,
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM,
     build_regime_result,
     load_window_verdicts,
 )
@@ -24,7 +28,7 @@ def test_load_window_verdicts_reads_capture_admission_rows(tmp_path: Path) -> No
                 "polymarket_continuity": {
                     "window_quote_coverage": [
                         {"window_id": "w1", "window_verdict": "good"},
-                        {"window_id": "w2", "window_verdict": "degraded"},
+                        {"window_id": "w2", "window_verdict": "degraded_light"},
                     ]
                 }
             }
@@ -34,7 +38,7 @@ def test_load_window_verdicts_reads_capture_admission_rows(tmp_path: Path) -> No
 
     verdicts = load_window_verdicts(admission_summary_path)
 
-    assert verdicts == {"w1": "good", "w2": "degraded"}
+    assert verdicts == {"w1": "good", "w2": "degraded_light"}
 
 
 def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> None:
@@ -65,6 +69,18 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
         ),
         _evaluation_row(
             window_id="w3",
+            preferred_side="up",
+            raw_edge=Decimal("0.02"),
+            net_edge=Decimal("0.005"),
+            pnl=Decimal("0.01"),
+            roi=Decimal("0.02"),
+            outcome="win",
+            seconds_remaining=60,
+            sigma_eff=Decimal("0.00010"),
+            quality="yellow",
+        ),
+        _evaluation_row(
+            window_id="w4",
             preferred_side=None,
             raw_edge=None,
             net_edge=None,
@@ -76,17 +92,42 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
             quality="red",
         ),
     ]
-    verdicts = {"w1": "good", "w2": "degraded", "w3": "unusable"}
+    verdicts = {
+        "w1": "good",
+        "w2": "degraded_light",
+        "w3": "degraded_medium",
+        "w4": "unusable",
+    }
 
     good_only = build_regime_result(
         rows,
         window_verdict_by_window=verdicts,
         regime_name=REGIME_GOOD_ONLY,
     )
-    good_plus = build_regime_result(
+    degraded_only = build_regime_result(
         rows,
         window_verdict_by_window=verdicts,
-        regime_name=REGIME_GOOD_PLUS_DEGRADED,
+        regime_name=REGIME_DEGRADED_ONLY,
+    )
+    light_only = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_DEGRADED_LIGHT_ONLY,
+    )
+    light_plus_medium = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_DEGRADED_LIGHT_PLUS_MEDIUM,
+    )
+    good_plus_light = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_GOOD_PLUS_DEGRADED_LIGHT,
+    )
+    good_plus_light_medium = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM,
     )
     all_windows = build_regime_result(
         rows,
@@ -100,15 +141,43 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
     assert good_only.hit_rate == Decimal("1")
     assert good_only.average_selected_net_edge == Decimal("0.03")
 
-    assert good_plus.snapshot_count == 2
-    assert good_plus.window_verdict_counts == {"degraded": 1, "good": 1}
-    assert good_plus.trade_count == 2
-    assert good_plus.hit_rate == Decimal("0.5")
-    assert good_plus.average_selected_raw_edge == Decimal("0.04")
+    assert degraded_only.snapshot_count == 2
+    assert degraded_only.window_verdict_counts == {
+        "degraded_light": 1,
+        "degraded_medium": 1,
+    }
+    assert degraded_only.trade_count == 2
+    assert degraded_only.hit_rate == Decimal("0.5")
+    assert degraded_only.average_selected_raw_edge == Decimal("0.025")
 
-    assert all_windows.snapshot_count == 3
-    assert all_windows.window_verdict_counts == {"degraded": 1, "good": 1, "unusable": 1}
-    assert all_windows.trade_count == 2
+    assert light_only.snapshot_count == 1
+    assert light_only.window_verdict_counts == {"degraded_light": 1}
+    assert light_only.trade_count == 1
+
+    assert light_plus_medium.snapshot_count == 2
+    assert light_plus_medium.window_verdict_counts == {
+        "degraded_light": 1,
+        "degraded_medium": 1,
+    }
+
+    assert good_plus_light.snapshot_count == 2
+    assert good_plus_light.window_verdict_counts == {"degraded_light": 1, "good": 1}
+
+    assert good_plus_light_medium.snapshot_count == 3
+    assert good_plus_light_medium.window_verdict_counts == {
+        "degraded_light": 1,
+        "degraded_medium": 1,
+        "good": 1,
+    }
+
+    assert all_windows.snapshot_count == 4
+    assert all_windows.window_verdict_counts == {
+        "degraded_light": 1,
+        "degraded_medium": 1,
+        "good": 1,
+        "unusable": 1,
+    }
+    assert all_windows.trade_count == 3
     assert (
         all_windows.slices["composite_quality_state"][0]["slice_dimension"]
         == "composite_quality_state"

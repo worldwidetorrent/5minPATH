@@ -21,9 +21,7 @@ from rtds.core.time import format_utc_compact, utc_now
 from rtds.replay.loader import load_chainlink_ticks
 from rtds.replay.regime_compare import (
     COMPARISON_SLICE_DIMENSIONS,
-    REGIME_ALL_WINDOWS,
-    REGIME_GOOD_ONLY,
-    REGIME_GOOD_PLUS_DEGRADED,
+    DEFAULT_REGIME_ORDER,
     build_regime_result,
     load_window_verdicts,
     regime_result_to_dict,
@@ -43,7 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def run_regime_comparison(args: argparse.Namespace) -> Path:
-    """Run one three-regime replay comparison for a finished capture session."""
+    """Run one multi-regime replay comparison for a finished capture session."""
 
     trade_date = date.fromisoformat(args.date)
     if not isinstance(args.session_id, str) or not args.session_id.strip():
@@ -90,11 +88,7 @@ def run_regime_comparison(args: argparse.Namespace) -> Path:
             window_verdict_by_window=window_verdict_by_window,
             regime_name=regime_name,
         )
-        for regime_name in (
-            REGIME_GOOD_ONLY,
-            REGIME_GOOD_PLUS_DEGRADED,
-            REGIME_ALL_WINDOWS,
-        )
+        for regime_name in DEFAULT_REGIME_ORDER
     ]
 
     write_json_file(

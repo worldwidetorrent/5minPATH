@@ -22,20 +22,61 @@ from rtds.replay.slices import (
 from rtds.storage.writer import serialize_value
 
 REGIME_GOOD_ONLY = "good_only"
+REGIME_DEGRADED_ONLY = "degraded_only"
+REGIME_DEGRADED_LIGHT_ONLY = "degraded_light_only"
+REGIME_DEGRADED_LIGHT_PLUS_MEDIUM = "degraded_light_plus_degraded_medium"
+REGIME_ALL_DEGRADED = "all_degraded"
+REGIME_GOOD_PLUS_DEGRADED_LIGHT = "good_plus_degraded_light"
+REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM = "good_plus_degraded_light_plus_degraded_medium"
 REGIME_GOOD_PLUS_DEGRADED = "good_plus_degraded"
 REGIME_ALL_WINDOWS = "all_windows"
 
+DEGRADED_WINDOW_VERDICTS = frozenset(
+    {"degraded_light", "degraded_medium", "degraded_heavy"}
+)
+
 REGIME_WINDOW_VERDICTS: dict[str, frozenset[str] | None] = {
     REGIME_GOOD_ONLY: frozenset({"good"}),
-    REGIME_GOOD_PLUS_DEGRADED: frozenset({"good", "degraded"}),
+    REGIME_DEGRADED_ONLY: DEGRADED_WINDOW_VERDICTS,
+    REGIME_DEGRADED_LIGHT_ONLY: frozenset({"degraded_light"}),
+    REGIME_DEGRADED_LIGHT_PLUS_MEDIUM: frozenset({"degraded_light", "degraded_medium"}),
+    REGIME_ALL_DEGRADED: frozenset(
+        {"degraded_light", "degraded_medium", "degraded_heavy", "unusable"}
+    ),
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT: frozenset({"good", "degraded_light"}),
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM: frozenset(
+        {"good", "degraded_light", "degraded_medium"}
+    ),
+    REGIME_GOOD_PLUS_DEGRADED: frozenset({"good", *DEGRADED_WINDOW_VERDICTS}),
     REGIME_ALL_WINDOWS: None,
 }
 
 REGIME_LABELS: dict[str, str] = {
     REGIME_GOOD_ONLY: "Regime A — good-only windows",
-    REGIME_GOOD_PLUS_DEGRADED: "Regime B — good + degraded windows",
-    REGIME_ALL_WINDOWS: "Regime C — all windows",
+    REGIME_DEGRADED_ONLY: "Regime B — degraded-only windows",
+    REGIME_DEGRADED_LIGHT_ONLY: "Regime C — degraded_light-only windows",
+    REGIME_DEGRADED_LIGHT_PLUS_MEDIUM: (
+        "Regime D — degraded_light + degraded_medium windows"
+    ),
+    REGIME_ALL_DEGRADED: "Regime E — all degraded / unusable windows",
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT: "Regime F — good + degraded_light windows",
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM: (
+        "Regime G — good + degraded_light + degraded_medium windows"
+    ),
+    REGIME_GOOD_PLUS_DEGRADED: "Legacy — good + all degraded windows",
+    REGIME_ALL_WINDOWS: "Regime H — all windows",
 }
+
+DEFAULT_REGIME_ORDER: tuple[str, ...] = (
+    REGIME_GOOD_ONLY,
+    REGIME_DEGRADED_ONLY,
+    REGIME_DEGRADED_LIGHT_ONLY,
+    REGIME_DEGRADED_LIGHT_PLUS_MEDIUM,
+    REGIME_ALL_DEGRADED,
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT,
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM,
+    REGIME_ALL_WINDOWS,
+)
 
 COMPARISON_SLICE_DIMENSIONS: tuple[str, ...] = (
     SECONDS_REMAINING_DIMENSION,
@@ -179,7 +220,10 @@ def render_regime_comparison_report(
 
     by_name = {result.regime_name: result for result in regime_results}
     good_only = by_name.get(REGIME_GOOD_ONLY)
-    good_plus = by_name.get(REGIME_GOOD_PLUS_DEGRADED)
+    degraded_only = by_name.get(REGIME_DEGRADED_ONLY)
+    degraded_light_only = by_name.get(REGIME_DEGRADED_LIGHT_ONLY)
+    good_plus_light = by_name.get(REGIME_GOOD_PLUS_DEGRADED_LIGHT)
+    good_plus_light_medium = by_name.get(REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM)
     all_windows = by_name.get(REGIME_ALL_WINDOWS)
 
     lines = [
@@ -191,14 +235,16 @@ def render_regime_comparison_report(
         "",
         "## Verdict",
     ]
-    if good_only is not None and good_plus is not None:
-        lines.append(
-            _verdict_line(
-                good_only=good_only,
-                good_plus=good_plus,
-                all_windows=all_windows,
-            )
+    lines.extend(
+        _verdict_lines(
+            good_only=good_only,
+            degraded_only=degraded_only,
+            degraded_light_only=degraded_light_only,
+            good_plus_light=good_plus_light,
+            good_plus_light_medium=good_plus_light_medium,
+            all_windows=all_windows,
         )
+    )
     lines.extend(
         [
             "",
@@ -292,26 +338,58 @@ def _slice_result_row(row: Any) -> dict[str, object]:
     }
 
 
-def _verdict_line(
+def _verdict_lines(
     *,
-    good_only: ReplayRegimeResult,
-    good_plus: ReplayRegimeResult,
+    good_only: ReplayRegimeResult | None,
+    degraded_only: ReplayRegimeResult | None,
+    degraded_light_only: ReplayRegimeResult | None,
+    good_plus_light: ReplayRegimeResult | None,
+    good_plus_light_medium: ReplayRegimeResult | None,
     all_windows: ReplayRegimeResult | None,
-) -> str:
-    if _close_enough(good_only, good_plus):
-        if all_windows is not None and _close_enough(good_plus, all_windows):
-            return (
-                "- good-only, good+degraded, and all-windows are materially similar; "
-                "the current degraded label likely overstates contamination."
+) -> list[str]:
+    lines: list[str] = []
+    if good_only is not None and good_plus_light is not None:
+        if _close_enough(good_only, good_plus_light):
+            lines.append(
+                "- good + degraded_light stays close to good-only; light degraded windows look "
+                "economically usable under current replay assumptions."
             )
-        return (
-            "- good+degraded stays close to good-only; degraded windows look economically usable "
-            "under the current replay assumptions."
-        )
-    return (
-        "- good+degraded diverges materially from good-only; degraded windows should remain "
-        "excluded or be subdivided further before policy extraction."
-    )
+        else:
+            lines.append(
+                "- even degraded_light windows diverge materially from good-only; keep them "
+                "outside the first policy universe for now."
+            )
+    if good_plus_light is not None and good_plus_light_medium is not None:
+        if _close_enough(good_plus_light, good_plus_light_medium):
+            lines.append(
+                "- adding degraded_medium windows does not materially change the light-degraded "
+                "profile; degradation looks broad rather than medium-specific."
+            )
+        else:
+            lines.append(
+                "- adding degraded_medium windows changes the economics materially; medium "
+                "degradation should remain a separate boundary from light degradation."
+            )
+    if degraded_light_only is not None and degraded_only is not None:
+        if _close_enough(degraded_light_only, degraded_only):
+            lines.append(
+                "- degraded-only behavior stays close to degraded_light-only; most degraded "
+                "impact comes from the light regime rather than a heavy tail."
+            )
+        else:
+            lines.append(
+                "- degraded-only behavior is materially worse than degraded_light-only; heavier "
+                "degraded windows are driving the contamination."
+            )
+    if good_only is not None and good_plus_light_medium is not None and all_windows is not None:
+        if _close_enough(good_plus_light_medium, all_windows):
+            lines.append(
+                "- the remaining spread from good-only comes from degraded windows, not a hidden "
+                "unusable-window tail."
+            )
+    if not lines:
+        lines.append("- comparison requires at least the good and degraded regime summaries.")
+    return lines
 
 
 def _close_enough(left: ReplayRegimeResult, right: ReplayRegimeResult) -> bool:
@@ -324,8 +402,15 @@ def _close_enough(left: ReplayRegimeResult, right: ReplayRegimeResult) -> bool:
 
 __all__ = [
     "COMPARISON_SLICE_DIMENSIONS",
+    "DEFAULT_REGIME_ORDER",
+    "REGIME_ALL_DEGRADED",
     "REGIME_ALL_WINDOWS",
+    "REGIME_DEGRADED_LIGHT_ONLY",
+    "REGIME_DEGRADED_LIGHT_PLUS_MEDIUM",
+    "REGIME_DEGRADED_ONLY",
     "REGIME_GOOD_ONLY",
+    "REGIME_GOOD_PLUS_DEGRADED_LIGHT",
+    "REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM",
     "REGIME_GOOD_PLUS_DEGRADED",
     "ReplayRegimeResult",
     "build_regime_result",

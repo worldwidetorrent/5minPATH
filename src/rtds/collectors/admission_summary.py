@@ -27,6 +27,14 @@ ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.90
 CONDITIONALLY_ADMISSIBLE_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.60
 ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 1
 CONDITIONALLY_ADMISSIBLE_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 3
+LIGHT_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 1
+MEDIUM_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES = 4
+LIGHT_MAX_CONSECUTIVE_VALID_EMPTY_BOOK = 3
+MEDIUM_MAX_CONSECUTIVE_VALID_EMPTY_BOOK = 9
+LIGHT_MIN_QUOTE_COVERAGE_RATIO = 0.90
+MEDIUM_MIN_QUOTE_COVERAGE_RATIO = 0.80
+LIGHT_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.85
+MEDIUM_MIN_SNAPSHOT_ELIGIBLE_RATIO = 0.70
 
 
 @dataclass(slots=True, frozen=True)
@@ -398,6 +406,26 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
                     result.session_diagnostics.max_consecutive_unusable_polymarket_windows
                 ),
                 "unusable_min_quote_coverage_ratio": window_quote_coverage_threshold,
+                "degraded_light_max_outside_grace_degraded_samples": (
+                    LIGHT_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
+                ),
+                "degraded_medium_max_outside_grace_degraded_samples": (
+                    MEDIUM_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
+                ),
+                "degraded_light_max_consecutive_valid_empty_book": (
+                    LIGHT_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
+                ),
+                "degraded_medium_max_consecutive_valid_empty_book": (
+                    MEDIUM_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
+                ),
+                "degraded_light_min_quote_coverage_ratio": LIGHT_MIN_QUOTE_COVERAGE_RATIO,
+                "degraded_medium_min_quote_coverage_ratio": MEDIUM_MIN_QUOTE_COVERAGE_RATIO,
+                "degraded_light_min_snapshot_eligible_ratio": (
+                    LIGHT_MIN_SNAPSHOT_ELIGIBLE_RATIO
+                ),
+                "degraded_medium_min_snapshot_eligible_ratio": (
+                    MEDIUM_MIN_SNAPSHOT_ELIGIBLE_RATIO
+                ),
             },
         },
         "chainlink_continuity": {
@@ -544,14 +572,49 @@ def _finalize_window_summary(
     binding_invalid_samples = int(window_summary["binding_invalid_samples"])
     quote_unavailable_samples = int(window_summary["quote_unavailable_samples"])
     valid_empty_book_samples = int(window_summary["valid_empty_book_samples"])
+    degraded_samples_outside_rollover_grace_window = int(
+        window_summary["degraded_samples_outside_rollover_grace_window"]
+    )
+    max_consecutive_valid_empty_book = int(window_summary["max_consecutive_valid_empty_book"])
+    snapshot_eligible_samples = int(window_summary["snapshot_eligible_samples"])
+    snapshot_eligible_ratio = (
+        snapshot_eligible_samples / total_samples if total_samples else 0.0
+    )
+    has_polymarket_degradation = (
+        valid_empty_book_samples > 0
+        or quote_unavailable_samples > 0
+        or degraded_samples_outside_rollover_grace_window > 0
+    )
     if (
         binding_invalid_samples > 0
         or quote_coverage_ratio < unusable_min_quote_coverage_ratio
         or (samples_with_quote_rows == 0 and total_samples > 0)
     ):
         window_verdict = "unusable"
-    elif quote_unavailable_samples > 0 or valid_empty_book_samples > 0:
-        window_verdict = "degraded"
+    elif (
+        quote_unavailable_samples > 0
+        or degraded_samples_outside_rollover_grace_window
+        > MEDIUM_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
+        or max_consecutive_valid_empty_book > MEDIUM_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
+        or quote_coverage_ratio < MEDIUM_MIN_QUOTE_COVERAGE_RATIO
+        or (
+            has_polymarket_degradation
+            and snapshot_eligible_ratio < MEDIUM_MIN_SNAPSHOT_ELIGIBLE_RATIO
+        )
+    ):
+        window_verdict = "degraded_heavy"
+    elif (
+        degraded_samples_outside_rollover_grace_window > LIGHT_MAX_OUTSIDE_GRACE_DEGRADED_SAMPLES
+        or max_consecutive_valid_empty_book > LIGHT_MAX_CONSECUTIVE_VALID_EMPTY_BOOK
+        or quote_coverage_ratio < LIGHT_MIN_QUOTE_COVERAGE_RATIO
+        or (
+            has_polymarket_degradation
+            and snapshot_eligible_ratio < LIGHT_MIN_SNAPSHOT_ELIGIBLE_RATIO
+        )
+    ):
+        window_verdict = "degraded_medium"
+    elif has_polymarket_degradation:
+        window_verdict = "degraded_light"
     else:
         window_verdict = "good"
     return {
@@ -574,16 +637,15 @@ def _finalize_window_summary(
         "degraded_samples_inside_rollover_grace_window": int(
             window_summary["degraded_samples_inside_rollover_grace_window"]
         ),
-        "degraded_samples_outside_rollover_grace_window": int(
-            window_summary["degraded_samples_outside_rollover_grace_window"]
+        "degraded_samples_outside_rollover_grace_window": (
+            degraded_samples_outside_rollover_grace_window
         ),
-        "max_consecutive_valid_empty_book": int(
-            window_summary["max_consecutive_valid_empty_book"]
-        ),
+        "max_consecutive_valid_empty_book": max_consecutive_valid_empty_book,
         "max_consecutive_quote_unavailable": int(
             window_summary["max_consecutive_quote_unavailable"]
         ),
-        "snapshot_eligible_samples": int(window_summary["snapshot_eligible_samples"]),
+        "snapshot_eligible_samples": snapshot_eligible_samples,
+        "snapshot_eligible_ratio": snapshot_eligible_ratio,
         "window_verdict": window_verdict,
     }
 

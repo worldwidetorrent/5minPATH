@@ -227,7 +227,7 @@ Replay that exact session with:
 
 `--session-id` matters here because replay otherwise reads the whole UTC date partition.
 
-Compare the pinned session across `good_only`, `good_plus_degraded`, and `all_windows` with:
+Compare the pinned session across the expanded window-quality regimes with:
 
 ```bash
 .venv/bin/python -m rtds.cli.compare_replay_regimes \
@@ -239,4 +239,6 @@ Compare the pinned session across `good_only`, `good_plus_degraded`, and `all_wi
 ```
 
 Use `snapshot_cadence_ms: 1000` for this baseline comparison so replay matches the capture granularity instead of oversampling 1-second state at 250 ms.
+- the comparison now runs these regimes: `good_only`, `degraded_only`, `degraded_light_only`, `degraded_light_plus_degraded_medium`, `all_degraded`, `good_plus_degraded_light`, `good_plus_degraded_light_plus_degraded_medium`, and `all_windows`
+- `admission_summary.json` is the source of truth for those window labels, and each selected window is now classified as `good`, `degraded_light`, `degraded_medium`, `degraded_heavy`, or `unusable`
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder
