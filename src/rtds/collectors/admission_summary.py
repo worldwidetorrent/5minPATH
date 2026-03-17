@@ -445,6 +445,23 @@ def build_capture_admission_summary(result: Phase1CaptureResult) -> dict[str, ob
     }
 
 
+def resolve_selected_window_bindings(
+    *,
+    capture_date: date,
+    sample_diagnostics_path: str | Path,
+    metadata_path: str | Path,
+) -> SelectedWindowBindings:
+    """Resolve final per-window selected bindings from stored capture artifacts."""
+
+    sample_rows = _read_jsonl_rows(Path(sample_diagnostics_path))
+    metadata_rows = _load_metadata_candidates(Path(metadata_path))
+    return _resolve_selected_window_bindings(
+        sample_rows,
+        metadata_rows=metadata_rows,
+        capture_date=capture_date,
+    )
+
+
 def _classify_admission_verdict(
     *,
     termination_reason: str,

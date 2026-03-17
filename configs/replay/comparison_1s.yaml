@@ -1,0 +1,9 @@
+snapshot_cadence_ms: 1000
+max_composite_age_ms: 1500
+max_oracle_age_ms: 5000
+min_active_venues: 2
+taker_fee_bps: 0
+slippage_buffer_bps: 10
+model_uncertainty_bps: 15
+fast_return_count: 10
+baseline_return_count: 30

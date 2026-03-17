@@ -226,4 +226,17 @@ Replay that exact session with:
 ```
 
 `--session-id` matters here because replay otherwise reads the whole UTC date partition.
+
+Compare the pinned session across `good_only`, `good_plus_degraded`, and `all_windows` with:
+
+```bash
+.venv/bin/python -m rtds.cli.compare_replay_regimes \
+  --date 2026-03-16 \
+  --session-id 20260316T101341416Z \
+  --config configs/replay/comparison_1s.yaml \
+  --rebuild-reference true \
+  --rebuild-snapshots true
+```
+
+Use `snapshot_cadence_ms: 1000` for this baseline comparison so replay matches the capture granularity instead of oversampling 1-second state at 250 ms.
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder

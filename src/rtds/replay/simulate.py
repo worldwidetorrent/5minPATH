@@ -234,7 +234,17 @@ def simulate_replay(
         )
         for simulation_input in simulation_inputs
     )
-    traded = [trade for trade in trades if trade.sim_trade_direction != SIM_NO_TRADE]
+    return ReplaySimulationResult(
+        trades=trades,
+        summary=summarize_simulated_trades(trades),
+    )
+
+
+def summarize_simulated_trades(trades: Iterable[SimulatedTrade]) -> ReplaySimulationSummary:
+    """Aggregate the canonical replay summary from an existing trade batch."""
+
+    trade_list = tuple(trades)
+    traded = [trade for trade in trade_list if trade.sim_trade_direction != SIM_NO_TRADE]
     winning = [trade for trade in traded if trade.sim_pnl > 0]
     predicted_edges = [
         trade.predicted_edge_net
@@ -250,26 +260,19 @@ def simulate_replay(
         None if not realized_edges else sum(realized_edges) / Decimal(len(realized_edges))
     )
 
-    return ReplaySimulationResult(
-        trades=trades,
-        summary=ReplaySimulationSummary(
-            snapshot_count=len(trades),
-            trade_count=len(traded),
-            hit_rate=(
-                Decimal("0")
-                if not traded
-                else Decimal(len(winning)) / Decimal(len(traded))
-            ),
-            total_pnl=sum((trade.sim_pnl for trade in trades), start=Decimal("0")),
-            average_predicted_edge=average_predicted_edge,
-            average_realized_edge=average_realized_edge,
-            realized_minus_predicted_edge=(
-                None
-                if average_predicted_edge is None or average_realized_edge is None
-                else average_realized_edge - average_predicted_edge
-            ),
-            simulation_version=SIMULATION_VERSION,
+    return ReplaySimulationSummary(
+        snapshot_count=len(trade_list),
+        trade_count=len(traded),
+        hit_rate=Decimal("0") if not traded else Decimal(len(winning)) / Decimal(len(traded)),
+        total_pnl=sum((trade.sim_pnl for trade in trade_list), start=Decimal("0")),
+        average_predicted_edge=average_predicted_edge,
+        average_realized_edge=average_realized_edge,
+        realized_minus_predicted_edge=(
+            None
+            if average_predicted_edge is None or average_realized_edge is None
+            else average_realized_edge - average_predicted_edge
         ),
+        simulation_version=SIMULATION_VERSION,
     )
 
 
@@ -345,4 +348,5 @@ __all__ = [
     "SimulatedTrade",
     "simulate_replay",
     "simulate_snapshot",
+    "summarize_simulated_trades",
 ]

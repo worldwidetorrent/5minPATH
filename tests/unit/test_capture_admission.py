@@ -4,7 +4,10 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from rtds.collectors.admission_summary import build_capture_admission_summary
+from rtds.collectors.admission_summary import (
+    build_capture_admission_summary,
+    resolve_selected_window_bindings,
+)
 from rtds.collectors.phase1_capture import (
     CollectorArtifactSet,
     MetadataSelectionDiagnostics,
@@ -448,6 +451,31 @@ def test_build_capture_admission_summary_preserves_public_stream_boundary_valida
     assert summary["snapshot_eligibility"]["snapshot_eligible_sample_ratio"] == 0.75
     assert summary["polymarket_continuity"]["window_verdict_counts"] == {"good": 4}
     assert summary["polymarket_continuity"]["window_quote_coverage"][0]["window_verdict"] == "good"
+
+
+def test_resolve_selected_window_bindings_uses_final_sample_state_per_window(
+    tmp_path: Path,
+) -> None:
+    result = _capture_result(tmp_path)
+    metadata_path = next(
+        collector.normalized_path
+        for collector in result.collectors
+        if collector.collector_name == "polymarket_metadata"
+    )
+
+    bindings = resolve_selected_window_bindings(
+        capture_date=result.capture_date,
+        sample_diagnostics_path=result.session_diagnostics.sample_diagnostics_path,
+        metadata_path=metadata_path,
+    )
+
+    assert len(bindings.records) == 3
+    assert bindings.unresolved_window_ids == []
+    assert [record.window_id for record in bindings.records] == [
+        "btc-5m-20260315T133000Z",
+        "btc-5m-20260315T133500Z",
+        "btc-5m-20260315T134000Z",
+    ]
 
 
 def _capture_result(

@@ -10,6 +10,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from rtds.collectors.admission_summary import resolve_selected_window_bindings
+from rtds.collectors.session_baseline import load_capture_result_from_summary
 from rtds.core.enums import SnapshotOrigin
 from rtds.core.time import format_utc_compact, seconds_remaining, utc_now
 from rtds.features.composite_nowcast import (
@@ -492,6 +494,31 @@ def _load_or_build_references(
         raise FileNotFoundError(
             "no persisted window_reference rows found and rebuild_reference=false"
         )
+
+    if config.session_id is not None:
+        summary_path = (
+            config.output_root
+            / "collect"
+            / f"date={config.trade_date.isoformat()}"
+            / f"session={config.session_id}"
+            / "summary.json"
+        )
+        if summary_path.exists():
+            capture_result = load_capture_result_from_summary(summary_path)
+            metadata_path = next(
+                collector.normalized_path
+                for collector in capture_result.collectors
+                if collector.collector_name == "polymarket_metadata"
+            )
+            selected_bindings = resolve_selected_window_bindings(
+                capture_date=capture_result.capture_date,
+                sample_diagnostics_path=capture_result.session_diagnostics.sample_diagnostics_path,
+                metadata_path=metadata_path,
+            )
+            return [
+                assign_window_reference(mapping_record, chainlink_ticks)
+                for mapping_record in selected_bindings.records
+            ]
 
     candidates = load_metadata_candidates(
         config.data_root,
