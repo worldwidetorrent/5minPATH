@@ -1,0 +1,45 @@
+{
+  "analysis_id": "task7-degraded-regime-reference-runs",
+  "description": "Pinned reference inputs and comparison contract for degraded-regime economic analysis.",
+  "reference_note_path": "docs/baselines/task7_reference_inputs.md",
+  "comparison_config_path": "configs/replay/task7_reference_comparison.yaml",
+  "quality_label_source": "capture admission_summary.json per-window window_verdict rows",
+  "regime_order": [
+    "good_only",
+    "degraded_only",
+    "degraded_light_only",
+    "degraded_light_plus_degraded_medium",
+    "all_degraded",
+    "good_plus_degraded_light",
+    "good_plus_degraded_light_plus_degraded_medium",
+    "all_windows"
+  ],
+  "topline_metrics": [
+    "trade_count",
+    "hit_rate",
+    "average_selected_raw_edge",
+    "average_selected_net_edge",
+    "total_pnl",
+    "average_roi"
+  ],
+  "sessions": [
+    {
+      "label": "baseline_6h",
+      "session_id": "20260316T101341416Z",
+      "capture_date": "2026-03-16",
+      "baseline_manifest_path": "configs/baselines/capture/20260316T101341416Z.json",
+      "baseline_note_path": "docs/baselines/20260316T101341416Z.md",
+      "summary_path": "artifacts/collect/date=2026-03-16/session=20260316T101341416Z/summary.json",
+      "admission_summary_path": "artifacts/collect/date=2026-03-16/session=20260316T101341416Z/admission_summary.json"
+    },
+    {
+      "label": "pilot_12h",
+      "session_id": "20260317T033427850Z",
+      "capture_date": "2026-03-17",
+      "baseline_manifest_path": "configs/baselines/capture/20260317T033427850Z.json",
+      "baseline_note_path": "docs/baselines/20260317T033427850Z.md",
+      "summary_path": "artifacts/collect/date=2026-03-17/session=20260317T033427850Z/summary.json",
+      "admission_summary_path": "artifacts/collect/date=2026-03-17/session=20260317T033427850Z/admission_summary.json"
+    }
+  ]
+}

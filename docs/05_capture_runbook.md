@@ -201,11 +201,17 @@ For a hardened pilot, also confirm:
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`
 - `admission_summary.json` now includes `empty_book_count_by_window`, `empty_book_count_by_slug`, and a per-window quote-coverage table with continuity flags plus `window_verdict`
 
-## Pinned baseline session
+## Pinned baseline sessions
 
-The current exploratory baseline session is:
+The current Task 7 reference sessions are:
 
 - [`20260316T101341416Z`](/home/ubuntu/testingproject/docs/baselines/20260316T101341416Z.md)
+- [`20260317T033427850Z`](/home/ubuntu/testingproject/docs/baselines/20260317T033427850Z.md)
+- [`Task 7 Reference Inputs`](/home/ubuntu/testingproject/docs/baselines/task7_reference_inputs.md)
+
+The machine-readable manifest tying both sessions to one comparison contract is:
+
+- [`configs/baselines/analysis/task7_reference_runs.json`](/home/ubuntu/testingproject/configs/baselines/analysis/task7_reference_runs.json)
 
 Refresh its admission summary after code changes with:
 
@@ -233,12 +239,12 @@ Compare the pinned session across the expanded window-quality regimes with:
 .venv/bin/python -m rtds.cli.compare_replay_regimes \
   --date 2026-03-16 \
   --session-id 20260316T101341416Z \
-  --config configs/replay/comparison_1s.yaml \
+  --config configs/replay/task7_reference_comparison.yaml \
   --rebuild-reference true \
   --rebuild-snapshots true
 ```
 
-Use `snapshot_cadence_ms: 1000` for this baseline comparison so replay matches the capture granularity instead of oversampling 1-second state at 250 ms.
+Use [`configs/replay/task7_reference_comparison.yaml`](/home/ubuntu/testingproject/configs/replay/task7_reference_comparison.yaml) for both Task 7 reference sessions so replay matches the 1-second capture granularity instead of oversampling 1-second state at 250 ms.
 - the comparison now runs these regimes: `good_only`, `degraded_only`, `degraded_light_only`, `degraded_light_plus_degraded_medium`, `all_degraded`, `good_plus_degraded_light`, `good_plus_degraded_light_plus_degraded_medium`, and `all_windows`
 - `admission_summary.json` is the source of truth for those window labels, and each selected window is now classified as `good`, `degraded_light`, `degraded_medium`, `degraded_heavy`, or `unusable`
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder
@@ -249,7 +255,7 @@ Stress the same session under execution-sensitive degraded-regime assumptions wi
 .venv/bin/python -m rtds.cli.compare_execution_sensitivity \
   --date 2026-03-16 \
   --session-id 20260316T101341416Z \
-  --config configs/replay/comparison_1s.yaml \
+  --config configs/replay/task7_reference_comparison.yaml \
   --rebuild-reference true \
   --rebuild-snapshots true
 ```
