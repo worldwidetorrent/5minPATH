@@ -23,6 +23,7 @@ from rtds.replay.regime_compare import (
     COMPARISON_SLICE_DIMENSIONS,
     DEFAULT_REGIME_ORDER,
     build_regime_result,
+    load_window_quality_rows,
     load_window_verdicts,
     regime_result_to_dict,
     render_regime_comparison_report,
@@ -63,6 +64,7 @@ def run_regime_comparison(args: argparse.Namespace) -> Path:
         trade_date=trade_date,
         session_id=session_id,
     )
+    window_quality_rows = load_window_quality_rows(admission_summary_path)
     window_verdict_by_window = load_window_verdicts(admission_summary_path)
 
     chainlink_ticks = load_chainlink_ticks(
@@ -97,6 +99,9 @@ def run_regime_comparison(args: argparse.Namespace) -> Path:
             "trade_date": trade_date.isoformat(),
             "session_id": session_id,
             "admission_summary_path": str(admission_summary_path),
+            "excluded_unusable_window_count": sum(
+                1 for row in window_quality_rows.values() if row.window_verdict == "unusable"
+            ),
             "regimes": [regime_result_to_dict(result) for result in regime_results],
         },
     )

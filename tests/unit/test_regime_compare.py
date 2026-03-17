@@ -8,12 +8,15 @@ from types import SimpleNamespace
 
 from rtds.replay.regime_compare import (
     REGIME_ALL_WINDOWS,
+    REGIME_DEGRADED_HEAVY_ONLY,
     REGIME_DEGRADED_LIGHT_ONLY,
     REGIME_DEGRADED_LIGHT_PLUS_MEDIUM,
+    REGIME_DEGRADED_MEDIUM_ONLY,
     REGIME_DEGRADED_ONLY,
     REGIME_GOOD_ONLY,
+    REGIME_GOOD_PLUS_ALL_DEGRADED,
     REGIME_GOOD_PLUS_DEGRADED_LIGHT,
-    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM,
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM,
     build_regime_result,
     load_window_quality_rows,
     load_window_verdicts,
@@ -152,6 +155,16 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
         window_verdict_by_window=verdicts,
         regime_name=REGIME_DEGRADED_LIGHT_ONLY,
     )
+    medium_only = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_DEGRADED_MEDIUM_ONLY,
+    )
+    heavy_only = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_DEGRADED_HEAVY_ONLY,
+    )
     light_plus_medium = build_regime_result(
         rows,
         window_verdict_by_window=verdicts,
@@ -165,7 +178,12 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
     good_plus_light_medium = build_regime_result(
         rows,
         window_verdict_by_window=verdicts,
-        regime_name=REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM,
+        regime_name=REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM,
+    )
+    good_plus_all_degraded = build_regime_result(
+        rows,
+        window_verdict_by_window=verdicts,
+        regime_name=REGIME_GOOD_PLUS_ALL_DEGRADED,
     )
     all_windows = build_regime_result(
         rows,
@@ -198,6 +216,18 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
     assert light_only.snapshot_count == 1
     assert light_only.window_verdict_counts == {"degraded_light": 1}
     assert light_only.trade_count == 1
+    assert light_only.pnl_per_window == Decimal("-0.02")
+    assert light_only.pnl_per_1000_snapshots == Decimal("-20")
+    assert light_only.pnl_per_100_trades == Decimal("-2")
+
+    assert medium_only.snapshot_count == 1
+    assert medium_only.window_verdict_counts == {"degraded_medium": 1}
+    assert medium_only.trade_count == 1
+
+    assert heavy_only.snapshot_count == 0
+    assert heavy_only.window_verdict_counts == {}
+    assert heavy_only.trade_count == 0
+    assert heavy_only.pnl_per_window is None
 
     assert light_plus_medium.snapshot_count == 2
     assert light_plus_medium.window_verdict_counts == {
@@ -215,12 +245,18 @@ def test_build_regime_result_filters_window_verdicts_and_preserves_metrics() -> 
         "good": 1,
     }
 
-    assert all_windows.snapshot_count == 4
+    assert good_plus_all_degraded.snapshot_count == 3
+    assert good_plus_all_degraded.window_verdict_counts == {
+        "degraded_light": 1,
+        "degraded_medium": 1,
+        "good": 1,
+    }
+
+    assert all_windows.snapshot_count == 3
     assert all_windows.window_verdict_counts == {
         "degraded_light": 1,
         "degraded_medium": 1,
         "good": 1,
-        "unusable": 1,
     }
     assert all_windows.trade_count == 3
     assert (

@@ -24,11 +24,15 @@ from rtds.storage.writer import serialize_value
 REGIME_GOOD_ONLY = "good_only"
 REGIME_DEGRADED_ONLY = "degraded_only"
 REGIME_DEGRADED_LIGHT_ONLY = "degraded_light_only"
+REGIME_DEGRADED_MEDIUM_ONLY = "degraded_medium_only"
+REGIME_DEGRADED_HEAVY_ONLY = "degraded_heavy_only"
 REGIME_DEGRADED_LIGHT_PLUS_MEDIUM = "degraded_light_plus_degraded_medium"
 REGIME_ALL_DEGRADED = "all_degraded"
 REGIME_GOOD_PLUS_DEGRADED_LIGHT = "good_plus_degraded_light"
-REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM = "good_plus_degraded_light_plus_degraded_medium"
-REGIME_GOOD_PLUS_DEGRADED = "good_plus_degraded"
+REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM = "good_plus_degraded_light_medium"
+REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM = REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM
+REGIME_GOOD_PLUS_ALL_DEGRADED = "good_plus_all_degraded"
+REGIME_GOOD_PLUS_DEGRADED = REGIME_GOOD_PLUS_ALL_DEGRADED
 REGIME_ALL_WINDOWS = "all_windows"
 
 DEGRADED_WINDOW_VERDICTS = frozenset(
@@ -39,42 +43,47 @@ REGIME_WINDOW_VERDICTS: dict[str, frozenset[str] | None] = {
     REGIME_GOOD_ONLY: frozenset({"good"}),
     REGIME_DEGRADED_ONLY: DEGRADED_WINDOW_VERDICTS,
     REGIME_DEGRADED_LIGHT_ONLY: frozenset({"degraded_light"}),
+    REGIME_DEGRADED_MEDIUM_ONLY: frozenset({"degraded_medium"}),
+    REGIME_DEGRADED_HEAVY_ONLY: frozenset({"degraded_heavy"}),
     REGIME_DEGRADED_LIGHT_PLUS_MEDIUM: frozenset({"degraded_light", "degraded_medium"}),
     REGIME_ALL_DEGRADED: frozenset(
-        {"degraded_light", "degraded_medium", "degraded_heavy", "unusable"}
+        {"degraded_light", "degraded_medium", "degraded_heavy"}
     ),
     REGIME_GOOD_PLUS_DEGRADED_LIGHT: frozenset({"good", "degraded_light"}),
-    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM: frozenset(
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM: frozenset(
         {"good", "degraded_light", "degraded_medium"}
     ),
-    REGIME_GOOD_PLUS_DEGRADED: frozenset({"good", *DEGRADED_WINDOW_VERDICTS}),
-    REGIME_ALL_WINDOWS: None,
+    REGIME_GOOD_PLUS_ALL_DEGRADED: frozenset({"good", *DEGRADED_WINDOW_VERDICTS}),
+    REGIME_ALL_WINDOWS: frozenset({"good", *DEGRADED_WINDOW_VERDICTS}),
 }
 
 REGIME_LABELS: dict[str, str] = {
     REGIME_GOOD_ONLY: "Regime A — good-only windows",
     REGIME_DEGRADED_ONLY: "Regime B — degraded-only windows",
     REGIME_DEGRADED_LIGHT_ONLY: "Regime C — degraded_light-only windows",
-    REGIME_DEGRADED_LIGHT_PLUS_MEDIUM: (
-        "Regime D — degraded_light + degraded_medium windows"
-    ),
-    REGIME_ALL_DEGRADED: "Regime E — all degraded / unusable windows",
+    REGIME_DEGRADED_MEDIUM_ONLY: "Regime D — degraded_medium-only windows",
+    REGIME_DEGRADED_HEAVY_ONLY: "Regime E — degraded_heavy-only windows",
     REGIME_GOOD_PLUS_DEGRADED_LIGHT: "Regime F — good + degraded_light windows",
-    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM: (
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM: (
         "Regime G — good + degraded_light + degraded_medium windows"
     ),
-    REGIME_GOOD_PLUS_DEGRADED: "Legacy — good + all degraded windows",
-    REGIME_ALL_WINDOWS: "Regime H — all windows",
+    REGIME_GOOD_PLUS_ALL_DEGRADED: "Regime H — good + all degraded windows",
+    REGIME_ALL_WINDOWS: "Regime I — all non-unusable windows",
+    REGIME_DEGRADED_LIGHT_PLUS_MEDIUM: (
+        "Supplemental — degraded_light + degraded_medium windows"
+    ),
+    REGIME_ALL_DEGRADED: "Supplemental — all degraded windows",
 }
 
 DEFAULT_REGIME_ORDER: tuple[str, ...] = (
     REGIME_GOOD_ONLY,
     REGIME_DEGRADED_ONLY,
     REGIME_DEGRADED_LIGHT_ONLY,
-    REGIME_DEGRADED_LIGHT_PLUS_MEDIUM,
-    REGIME_ALL_DEGRADED,
+    REGIME_DEGRADED_MEDIUM_ONLY,
+    REGIME_DEGRADED_HEAVY_ONLY,
     REGIME_GOOD_PLUS_DEGRADED_LIGHT,
-    REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM,
+    REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM,
+    REGIME_GOOD_PLUS_ALL_DEGRADED,
     REGIME_ALL_WINDOWS,
 )
 
@@ -111,6 +120,9 @@ class ReplayRegimeResult:
     average_selected_raw_edge: Decimal | None
     average_selected_net_edge: Decimal | None
     total_pnl: Decimal
+    pnl_per_window: Decimal | None
+    pnl_per_1000_snapshots: Decimal | None
+    pnl_per_100_trades: Decimal | None
     average_roi: Decimal | None
     average_predicted_edge: Decimal | None
     average_realized_edge: Decimal | None
@@ -263,6 +275,21 @@ def build_regime_result(
         average_selected_raw_edge=average_selected_raw_edge,
         average_selected_net_edge=average_selected_net_edge,
         total_pnl=simulation_summary.total_pnl,
+        pnl_per_window=_normalized_pnl(
+            simulation_summary.total_pnl,
+            count=len(window_ids),
+            scale=Decimal("1"),
+        ),
+        pnl_per_1000_snapshots=_normalized_pnl(
+            simulation_summary.total_pnl,
+            count=len(rows),
+            scale=Decimal("1000"),
+        ),
+        pnl_per_100_trades=_normalized_pnl(
+            simulation_summary.total_pnl,
+            count=simulation_summary.trade_count,
+            scale=Decimal("100"),
+        ),
         average_roi=_average_trade_roi(row.simulated_trade for row in rows),
         average_predicted_edge=simulation_summary.average_predicted_edge,
         average_realized_edge=simulation_summary.average_realized_edge,
@@ -284,9 +311,16 @@ def render_regime_comparison_report(
     good_only = by_name.get(REGIME_GOOD_ONLY)
     degraded_only = by_name.get(REGIME_DEGRADED_ONLY)
     degraded_light_only = by_name.get(REGIME_DEGRADED_LIGHT_ONLY)
+    degraded_medium_only = by_name.get(REGIME_DEGRADED_MEDIUM_ONLY)
+    degraded_heavy_only = by_name.get(REGIME_DEGRADED_HEAVY_ONLY)
     good_plus_light = by_name.get(REGIME_GOOD_PLUS_DEGRADED_LIGHT)
-    good_plus_light_medium = by_name.get(REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM)
+    good_plus_light_medium = by_name.get(REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM)
+    good_plus_all_degraded = by_name.get(REGIME_GOOD_PLUS_ALL_DEGRADED)
     all_windows = by_name.get(REGIME_ALL_WINDOWS)
+    quality_rows = load_window_quality_rows(admission_summary_path)
+    excluded_unusable_window_count = sum(
+        1 for row in quality_rows.values() if row.window_verdict == "unusable"
+    )
 
     lines = [
         f"# Replay Regime Comparison — {trade_date}",
@@ -302,11 +336,30 @@ def render_regime_comparison_report(
             good_only=good_only,
             degraded_only=degraded_only,
             degraded_light_only=degraded_light_only,
+            degraded_medium_only=degraded_medium_only,
+            degraded_heavy_only=degraded_heavy_only,
             good_plus_light=good_plus_light,
             good_plus_light_medium=good_plus_light_medium,
+            good_plus_all_degraded=good_plus_all_degraded,
             all_windows=all_windows,
         )
     )
+    if excluded_unusable_window_count > 0:
+        lines.extend(
+            [
+                "",
+                "## Footnote",
+                (
+                    f"- excluded unusable windows from main regimes: "
+                    f"{excluded_unusable_window_count}"
+                ),
+                (
+                    "- unusable windows remain visible in the capture admission summary and are "
+                    "treated as a contamination footnote rather than part of the main economic "
+                    "comparison."
+                ),
+            ]
+        )
     lines.extend(
         [
             "",
@@ -325,6 +378,9 @@ def render_regime_comparison_report(
                 f"- average_selected_raw_edge: {result.average_selected_raw_edge}",
                 f"- average_selected_net_edge: {result.average_selected_net_edge}",
                 f"- total_pnl: {result.total_pnl}",
+                f"- pnl_per_window: {result.pnl_per_window}",
+                f"- pnl_per_1000_snapshots: {result.pnl_per_1000_snapshots}",
+                f"- pnl_per_100_trades: {result.pnl_per_100_trades}",
                 f"- average_roi: {result.average_roi}",
                 f"- average_predicted_edge: {result.average_predicted_edge}",
                 f"- average_realized_edge: {result.average_realized_edge}",
@@ -347,6 +403,9 @@ def regime_result_to_dict(result: ReplayRegimeResult) -> dict[str, object]:
         "average_selected_raw_edge": serialize_value(result.average_selected_raw_edge),
         "average_selected_net_edge": serialize_value(result.average_selected_net_edge),
         "total_pnl": serialize_value(result.total_pnl),
+        "pnl_per_window": serialize_value(result.pnl_per_window),
+        "pnl_per_1000_snapshots": serialize_value(result.pnl_per_1000_snapshots),
+        "pnl_per_100_trades": serialize_value(result.pnl_per_100_trades),
         "average_roi": serialize_value(result.average_roi),
         "average_predicted_edge": serialize_value(result.average_predicted_edge),
         "average_realized_edge": serialize_value(result.average_realized_edge),
@@ -364,6 +423,12 @@ def _average_decimal(values: Sequence[Decimal]) -> Decimal | None:
     if not values:
         return None
     return sum(values, start=Decimal("0")) / Decimal(len(values))
+
+
+def _normalized_pnl(total_pnl: Decimal, *, count: int, scale: Decimal) -> Decimal | None:
+    if count <= 0:
+        return None
+    return (total_pnl / Decimal(count)) * scale
 
 
 def _selected_edge(edge: Any, *, net: bool) -> Decimal | None:
@@ -405,8 +470,11 @@ def _verdict_lines(
     good_only: ReplayRegimeResult | None,
     degraded_only: ReplayRegimeResult | None,
     degraded_light_only: ReplayRegimeResult | None,
+    degraded_medium_only: ReplayRegimeResult | None,
+    degraded_heavy_only: ReplayRegimeResult | None,
     good_plus_light: ReplayRegimeResult | None,
     good_plus_light_medium: ReplayRegimeResult | None,
+    good_plus_all_degraded: ReplayRegimeResult | None,
     all_windows: ReplayRegimeResult | None,
 ) -> list[str]:
     lines: list[str] = []
@@ -432,6 +500,17 @@ def _verdict_lines(
                 "- adding degraded_medium windows changes the economics materially; medium "
                 "degradation should remain a separate boundary from light degradation."
             )
+    if degraded_medium_only is not None and degraded_heavy_only is not None:
+        if _close_enough(degraded_medium_only, degraded_heavy_only):
+            lines.append(
+                "- degraded_medium and degraded_heavy stay close enough that the current "
+                "boundary may be too strict economically."
+            )
+        else:
+            lines.append(
+                "- degraded_heavy is economically distinct from degraded_medium; keep heavy "
+                "degradation outside any exploratory trading universe."
+            )
     if degraded_light_only is not None and degraded_only is not None:
         if _close_enough(degraded_light_only, degraded_only):
             lines.append(
@@ -443,11 +522,16 @@ def _verdict_lines(
                 "- degraded-only behavior is materially worse than degraded_light-only; heavier "
                 "degraded windows are driving the contamination."
             )
-    if good_only is not None and good_plus_light_medium is not None and all_windows is not None:
-        if _close_enough(good_plus_light_medium, all_windows):
+    if (
+        good_only is not None
+        and good_plus_light_medium is not None
+        and good_plus_all_degraded is not None
+        and all_windows is not None
+    ):
+        if _close_enough(good_plus_all_degraded, all_windows):
             lines.append(
-                "- the remaining spread from good-only comes from degraded windows, not a hidden "
-                "unusable-window tail."
+                "- all non-unusable windows behave the same as good + all degraded; the main "
+                "comparison is no longer being driven by an unusable-window tail."
             )
     if not lines:
         lines.append("- comparison requires at least the good and degraded regime summaries.")
@@ -469,11 +553,15 @@ __all__ = [
     "REGIME_ALL_DEGRADED",
     "REGIME_ALL_WINDOWS",
     "REGIME_DEGRADED_LIGHT_ONLY",
+    "REGIME_DEGRADED_MEDIUM_ONLY",
+    "REGIME_DEGRADED_HEAVY_ONLY",
     "REGIME_DEGRADED_LIGHT_PLUS_MEDIUM",
     "REGIME_DEGRADED_ONLY",
     "REGIME_GOOD_ONLY",
     "REGIME_GOOD_PLUS_DEGRADED_LIGHT",
+    "REGIME_GOOD_PLUS_DEGRADED_LIGHT_MEDIUM",
     "REGIME_GOOD_PLUS_DEGRADED_LIGHT_PLUS_MEDIUM",
+    "REGIME_GOOD_PLUS_ALL_DEGRADED",
     "REGIME_GOOD_PLUS_DEGRADED",
     "ReplayRegimeResult",
     "build_regime_result",

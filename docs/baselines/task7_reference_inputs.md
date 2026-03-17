@@ -69,10 +69,11 @@ Task 7 regime comparison uses this order:
 - `good_only`
 - `degraded_only`
 - `degraded_light_only`
-- `degraded_light_plus_degraded_medium`
-- `all_degraded`
+- `degraded_medium_only`
+- `degraded_heavy_only`
 - `good_plus_degraded_light`
-- `good_plus_degraded_light_plus_degraded_medium`
+- `good_plus_degraded_light_medium`
+- `good_plus_all_degraded`
 - `all_windows`
 
 ## Frozen topline metrics
@@ -85,6 +86,9 @@ For each regime, compare:
 - `average_selected_net_edge`
 - `total_pnl`
 - `average_roi`
+- `pnl_per_window`
+- `pnl_per_1000_snapshots`
+- `pnl_per_100_trades`
 
 ## Sanctioned commands
 

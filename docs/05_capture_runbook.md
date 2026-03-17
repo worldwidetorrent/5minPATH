@@ -245,9 +245,10 @@ Compare the pinned session across the expanded window-quality regimes with:
 ```
 
 Use [`configs/replay/task7_reference_comparison.yaml`](/home/ubuntu/testingproject/configs/replay/task7_reference_comparison.yaml) for both Task 7 reference sessions so replay matches the 1-second capture granularity instead of oversampling 1-second state at 250 ms.
-- the comparison now runs these regimes: `good_only`, `degraded_only`, `degraded_light_only`, `degraded_light_plus_degraded_medium`, `all_degraded`, `good_plus_degraded_light`, `good_plus_degraded_light_plus_degraded_medium`, and `all_windows`
+- the comparison now runs these regimes: `good_only`, `degraded_only`, `degraded_light_only`, `degraded_medium_only`, `degraded_heavy_only`, `good_plus_degraded_light`, `good_plus_degraded_light_medium`, `good_plus_all_degraded`, and `all_windows`
 - `admission_summary.json` is the source of truth for those window labels, and each selected window is now classified as `good`, `degraded_light`, `degraded_medium`, `degraded_heavy`, or `unusable`
 - the classifier contract is now explicit and versioned in [`configs/replay/window_quality_classifier_v1.json`](/home/ubuntu/testingproject/configs/replay/window_quality_classifier_v1.json), and each admission summary emits `polymarket_continuity.window_quality_classifier`
+- the main comparison excludes `unusable` windows and treats them as a footnote contamination check rather than as part of the main economic regime table
 - `snapshot_eligible_sample_count` is currently a conservative capture-side proxy because `build_snapshots` is still a placeholder
 
 Stress the same session under execution-sensitive degraded-regime assumptions with:
