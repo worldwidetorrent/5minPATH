@@ -15,6 +15,7 @@ from rtds.collectors.phase1_capture import (
     DEFAULT_BASE_BACKOFF_SECONDS,
     DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS,
     DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS,
+    DEFAULT_CHAINLINK_CIRCUIT_BREAKER_SECONDS,
     DEFAULT_CHAINLINK_POLL_INTERVAL_SECONDS,
     DEFAULT_CHAINLINK_SOURCE_PREFERENCE,
     DEFAULT_CHAINLINK_STREAMS_BASE_URL,
@@ -23,6 +24,8 @@ from rtds.collectors.phase1_capture import (
     DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
     DEFAULT_DURATION_SECONDS,
     DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS,
+    DEFAULT_FORWARD_PROGRESS_WATCHDOG_SECONDS,
+    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_MAX_BACKOFF_SECONDS,
     DEFAULT_MAX_CONSECUTIVE_CHAINLINK_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_EXCHANGE_FAILURES,
@@ -171,6 +174,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temp-root", default="tmp")
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument(
+        "--heartbeat-interval-seconds",
+        type=float,
+        default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    )
+    parser.add_argument(
+        "--forward-progress-watchdog-seconds",
+        type=float,
+        default=DEFAULT_FORWARD_PROGRESS_WATCHDOG_SECONDS,
+    )
+    parser.add_argument(
         "--checkpoint-interval-seconds",
         type=float,
         default=DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
@@ -222,6 +235,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--boundary-burst-window-seconds", type=float, default=None)
     parser.add_argument("--boundary-burst-interval-seconds", type=float, default=None)
+    parser.add_argument(
+        "--chainlink-circuit-breaker-seconds",
+        type=float,
+        default=DEFAULT_CHAINLINK_CIRCUIT_BREAKER_SECONDS,
+    )
     parser.add_argument("--max-fetch-retries", type=int, default=DEFAULT_MAX_FETCH_RETRIES)
     parser.add_argument(
         "--base-backoff-seconds",
@@ -360,6 +378,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         temp_root=Path(args.temp_root),
         session_id=session_id,
         timeout_seconds=args.timeout_seconds,
+        heartbeat_interval_seconds=args.heartbeat_interval_seconds,
+        forward_progress_watchdog_seconds=args.forward_progress_watchdog_seconds,
         checkpoint_interval_seconds=args.checkpoint_interval_seconds,
         metadata_limit=args.metadata_limit,
         metadata_pages=args.metadata_pages,
@@ -391,6 +411,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         boundary_burst_enabled=bool(timing["boundary_burst_enabled"]),
         boundary_burst_window_seconds=float(timing["boundary_burst_window_seconds"]),
         boundary_burst_interval_seconds=float(timing["boundary_burst_interval_seconds"]),
+        chainlink_circuit_breaker_seconds=float(args.chainlink_circuit_breaker_seconds),
         chainlink_source_preference=str(args.chainlink_source_preference),
         chainlink_streams_base_url=str(args.chainlink_streams_base_url),
         chainlink_streams_page_url=str(args.chainlink_streams_page_url),

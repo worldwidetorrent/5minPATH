@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import signal
 import socket
 import time
 from collections import Counter
@@ -45,8 +46,13 @@ from rtds.normalizers.exchange import (
     normalize_kraken_quote,
 )
 from rtds.normalizers.polymarket import normalize_polymarket_quote
-from rtds.schemas.normalized import ExchangeQuote, PolymarketQuote
-from rtds.storage.writer import append_jsonl_row, write_json_file, write_jsonl_rows
+from rtds.schemas.normalized import ExchangeQuote
+from rtds.storage.writer import (
+    append_jsonl_row,
+    append_jsonl_rows,
+    write_json_file,
+    write_jsonl_rows,
+)
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_METADATA_LIMIT = 500
@@ -54,6 +60,8 @@ DEFAULT_METADATA_PAGES = 1
 DEFAULT_DURATION_SECONDS = 0.0
 DEFAULT_POLL_INTERVAL_SECONDS = 60.0
 DEFAULT_CHECKPOINT_INTERVAL_SECONDS = 60.0
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
+DEFAULT_FORWARD_PROGRESS_WATCHDOG_SECONDS = 300.0
 DEFAULT_METADATA_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
 DEFAULT_CHAINLINK_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
 DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
@@ -71,6 +79,7 @@ DEFAULT_POLYMARKET_UNUSABLE_WINDOW_MIN_QUOTE_COVERAGE_RATIO = 0.50
 DEFAULT_POLYMARKET_ROLLOVER_GRACE_SECONDS = 90.0
 DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS = 15.0
 DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS = 1.0
+DEFAULT_CHAINLINK_CIRCUIT_BREAKER_SECONDS = 300.0
 DEFAULT_CHAINLINK_SOURCE_PREFERENCE = "streams_public"
 DEFAULT_CHAINLINK_RPC_URL = "https://arb1.arbitrum.io/rpc"
 DEFAULT_CHAINLINK_PROXY_ADDRESS = "0x6ce185860a4963106506C203335A2910413708e9"
@@ -103,6 +112,7 @@ SOURCE_FAILURE_TERMINATION_REASONS = frozenset(
     {
         "selection_failure_threshold_exceeded",
         "chainlink_failure_threshold_exceeded",
+        "chainlink_circuit_breaker_exceeded",
         "exchange_failure_threshold_exceeded",
         "polymarket_market_invalid",
         "polymarket_schema_failure",
@@ -124,6 +134,8 @@ class Phase1CaptureConfig:
     session_id: str
     capture_started_at: datetime | None = None
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    forward_progress_watchdog_seconds: float = DEFAULT_FORWARD_PROGRESS_WATCHDOG_SECONDS
     metadata_limit: int = DEFAULT_METADATA_LIMIT
     metadata_pages: int = DEFAULT_METADATA_PAGES
     duration_seconds: float = DEFAULT_DURATION_SECONDS
@@ -155,6 +167,7 @@ class Phase1CaptureConfig:
     boundary_burst_enabled: bool = False
     boundary_burst_window_seconds: float = DEFAULT_BOUNDARY_BURST_WINDOW_SECONDS
     boundary_burst_interval_seconds: float = DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS
+    chainlink_circuit_breaker_seconds: float = DEFAULT_CHAINLINK_CIRCUIT_BREAKER_SECONDS
     chainlink_source_preference: str = DEFAULT_CHAINLINK_SOURCE_PREFERENCE
     chainlink_rpc_url: str = DEFAULT_CHAINLINK_RPC_URL
     chainlink_proxy_address: str = DEFAULT_CHAINLINK_PROXY_ADDRESS
@@ -210,9 +223,25 @@ class FetchResult:
     attempts: int
     retries: int
     failure_type: str | None = None
+    failure_class: str | None = None
     failure_message: str | None = None
     http_status: int | None = None
+    retryable: bool | None = None
     headers: dict[str, str] = field(default_factory=dict)
+
+
+class CaptureWatchdogAbort(RuntimeError):
+    """Raised when the collector stops making forward progress."""
+
+
+@dataclass(slots=True)
+class ForwardProgressState:
+    """Forward-progress markers used for watchdogs and checkpoints."""
+
+    last_sample_started_at: datetime | None = None
+    last_sample_completed_at: datetime | None = None
+    last_artifact_flush_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -572,6 +601,81 @@ def _artifact_summary_paths(
     )
 
 
+def _collector_output_paths(
+    config: Phase1CaptureConfig,
+    *,
+    capture_date: date,
+) -> dict[str, tuple[Path, Path]]:
+    return {
+        "polymarket_metadata": (
+            _dataset_path(
+                config.data_root / "raw",
+                dataset_name="polymarket_metadata",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+            _dataset_path(
+                config.data_root / "normalized",
+                dataset_name="market_metadata_events",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+        ),
+        "chainlink": (
+            _dataset_path(
+                config.data_root / "raw",
+                dataset_name="chainlink",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+            _dataset_path(
+                config.data_root / "normalized",
+                dataset_name="chainlink_ticks",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+        ),
+        "exchange": (
+            _dataset_path(
+                config.data_root / "raw",
+                dataset_name="exchange",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+            _dataset_path(
+                config.data_root / "normalized",
+                dataset_name="exchange_quotes",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+        ),
+        "polymarket_quotes": (
+            _dataset_path(
+                config.data_root / "raw",
+                dataset_name="polymarket_quotes",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+            _dataset_path(
+                config.data_root / "normalized",
+                dataset_name="polymarket_quotes",
+                capture_date=capture_date,
+                session_id=config.session_id,
+            ),
+        ),
+    }
+
+
+def _initialize_collector_output_files(
+    collector_output_paths: dict[str, tuple[Path, Path]],
+) -> None:
+    for raw_path, normalized_path in collector_output_paths.values():
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        normalized_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.touch()
+        normalized_path.touch()
+
+
 def _append_lifecycle_transition(
     *,
     history: list[dict[str, object]],
@@ -624,12 +728,16 @@ def _write_partial_capture_summary(
     lifecycle_state: str,
     lifecycle_history: tuple[dict[str, object], ...],
     sample_count: int,
+    last_sample_started_at: datetime | None,
     last_completed_sample_number: int,
     last_completed_sample_started_at: datetime | None,
+    last_artifact_flush_at: datetime | None,
     last_selected_market_id: str | None,
     last_selected_market_slug: str | None,
     last_selected_window_id: str | None,
     last_healthy_timestamp_by_source: dict[str, datetime | None],
+    collector_output_paths: dict[str, tuple[Path, Path]],
+    collector_row_counts_by_name: dict[str, dict[str, int]],
     degraded_sample_count: int,
     failed_sample_count: int,
     empty_book_count: int,
@@ -641,6 +749,8 @@ def _write_partial_capture_summary(
     polymarket_selector_refresh_count: int,
     polymarket_selector_rebind_count: int,
     polymarket_rollover_grace_sample_count: int,
+    chainlink_failure_started_at: datetime | None,
+    chainlink_circuit_breaker_seconds: float,
     termination_reason: str | None,
     failure_type: str | None = None,
     failure_message: str | None = None,
@@ -658,8 +768,10 @@ def _write_partial_capture_summary(
             "summary_path": str(summary_path),
             "sample_diagnostics_path": str(sample_diagnostics_path),
             "sample_count": sample_count,
+            "last_sample_started_at": last_sample_started_at,
             "last_completed_sample_number": last_completed_sample_number,
             "last_completed_sample_started_at": last_completed_sample_started_at,
+            "last_artifact_flush_at": last_artifact_flush_at,
             "selected_market_id": last_selected_market_id,
             "selected_market_slug": last_selected_market_slug,
             "selected_window_id": last_selected_window_id,
@@ -669,6 +781,22 @@ def _write_partial_capture_summary(
             "last_healthy_timestamp_by_source": {
                 source_name: timestamp
                 for source_name, timestamp in sorted(last_healthy_timestamp_by_source.items())
+            },
+            "collector_outputs": {
+                collector_name: {
+                    "raw_path": str(paths[0]),
+                    "normalized_path": str(paths[1]),
+                    "raw_row_count": int(
+                        collector_row_counts_by_name.get(collector_name, {}).get("raw", 0)
+                    ),
+                    "normalized_row_count": int(
+                        collector_row_counts_by_name.get(collector_name, {}).get(
+                            "normalized",
+                            0,
+                        )
+                    ),
+                }
+                for collector_name, paths in sorted(collector_output_paths.items())
             },
             "degraded_sample_count": degraded_sample_count,
             "failed_sample_count": failed_sample_count,
@@ -689,10 +817,150 @@ def _write_partial_capture_summary(
             "polymarket_selector_refresh_count": polymarket_selector_refresh_count,
             "polymarket_selector_rebind_count": polymarket_selector_rebind_count,
             "polymarket_rollover_grace_sample_count": polymarket_rollover_grace_sample_count,
+            "chainlink_failure_started_at": chainlink_failure_started_at,
+            "chainlink_circuit_breaker_seconds": chainlink_circuit_breaker_seconds,
             "termination_reason": termination_reason,
             "failure_type": failure_type,
             "failure_message": failure_message,
         },
+    )
+
+
+def _append_collector_rows(
+    *,
+    collector_name: str,
+    collector_output_paths: dict[str, tuple[Path, Path]],
+    collector_row_counts_by_name: dict[str, dict[str, int]],
+    raw_rows: tuple[dict[str, object], ...] | list[dict[str, object]],
+    normalized_rows: tuple[object, ...] | list[object],
+) -> None:
+    raw_path, normalized_path = collector_output_paths[collector_name]
+    if raw_rows:
+        append_jsonl_rows(raw_path, raw_rows)
+    if normalized_rows:
+        append_jsonl_rows(normalized_path, normalized_rows)
+    collector_row_counts = collector_row_counts_by_name.setdefault(
+        collector_name,
+        {"raw": 0, "normalized": 0},
+    )
+    collector_row_counts["raw"] += len(raw_rows)
+    collector_row_counts["normalized"] += len(normalized_rows)
+
+
+def _collector_artifact_sets(
+    collector_output_paths: dict[str, tuple[Path, Path]],
+    collector_row_counts_by_name: dict[str, dict[str, int]],
+) -> tuple[CollectorArtifactSet, ...]:
+    ordered_names = (
+        "polymarket_metadata",
+        "chainlink",
+        "exchange",
+        "polymarket_quotes",
+    )
+    return tuple(
+        CollectorArtifactSet(
+            collector_name=collector_name,
+            raw_path=collector_output_paths[collector_name][0],
+            normalized_path=collector_output_paths[collector_name][1],
+            raw_row_count=int(collector_row_counts_by_name[collector_name]["raw"]),
+            normalized_row_count=int(
+                collector_row_counts_by_name[collector_name]["normalized"]
+            ),
+        )
+        for collector_name in ordered_names
+    )
+
+
+def _install_forward_progress_watchdog(
+    *,
+    timeout_seconds: float,
+    state: ForwardProgressState,
+) -> signal.Handlers | None:
+    if timeout_seconds <= 0 or not hasattr(signal, "SIGALRM"):
+        return None
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def _handler(signum: int, _frame) -> None:
+        del signum
+        raise CaptureWatchdogAbort(
+            "forward progress watchdog expired; "
+            f"last_sample_started_at={_format_optional_timestamp(state.last_sample_started_at)} "
+            "last_sample_completed_at="
+            f"{_format_optional_timestamp(state.last_sample_completed_at)} "
+            f"last_artifact_flush_at={_format_optional_timestamp(state.last_artifact_flush_at)}"
+        )
+
+    signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    return previous_handler
+
+
+def _reset_forward_progress_watchdog(timeout_seconds: float) -> None:
+    if timeout_seconds <= 0 or not hasattr(signal, "ITIMER_REAL"):
+        return
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+
+
+def _clear_forward_progress_watchdog(previous_handler: signal.Handlers | None) -> None:
+    if not hasattr(signal, "SIGALRM"):
+        return
+    signal.setitimer(signal.ITIMER_REAL, 0.0)
+    if previous_handler is not None:
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _format_optional_timestamp(timestamp: datetime | None) -> str | None:
+    if timestamp is None:
+        return None
+    return format_utc(timestamp, timespec="milliseconds")
+
+
+def _source_health_summary(
+    *,
+    last_healthy_timestamp_by_source: dict[str, datetime | None],
+    consecutive_missing_by_source: Counter[str],
+) -> dict[str, str]:
+    summary: dict[str, str] = {}
+    for source_name in ("polymarket_metadata", "chainlink", "exchange", "polymarket_quotes"):
+        last_healthy = _format_optional_timestamp(last_healthy_timestamp_by_source.get(source_name))
+        missing = int(consecutive_missing_by_source.get(source_name, 0))
+        if last_healthy is None:
+            summary[source_name] = "never_healthy"
+        elif missing > 0:
+            summary[source_name] = f"degraded missing_streak={missing} last_healthy={last_healthy}"
+        else:
+            summary[source_name] = f"healthy last_healthy={last_healthy}"
+    return summary
+
+
+def _log_capture_heartbeat(
+    *,
+    logger: logging.Logger,
+    sample_count: int,
+    lifecycle_state: str,
+    last_completed_sample_started_at: datetime | None,
+    selected_window_id: str | None,
+    last_artifact_flush_at: datetime | None,
+    last_healthy_timestamp_by_source: dict[str, datetime | None],
+    consecutive_missing_by_source: Counter[str],
+) -> None:
+    logger.info(
+        "heartbeat sample=%s lifecycle=%s last_completed=%s selected_window=%s "
+        "last_flush=%s source_health=%s",
+        sample_count,
+        lifecycle_state,
+        _format_optional_timestamp(last_completed_sample_started_at) or "none",
+        selected_window_id or "none",
+        _format_optional_timestamp(last_artifact_flush_at) or "none",
+        json.dumps(
+            _source_health_summary(
+                last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+                consecutive_missing_by_source=consecutive_missing_by_source,
+            ),
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     )
 
 
@@ -709,8 +977,14 @@ def run_phase1_capture(
         config,
         capture_date=capture_date,
     )
+    collector_output_paths = _collector_output_paths(config, capture_date=capture_date)
+    collector_row_counts_by_name = {
+        collector_name: {"raw": 0, "normalized": 0}
+        for collector_name in collector_output_paths
+    }
     sample_diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
     sample_diagnostics_path.touch()
+    _initialize_collector_output_files(collector_output_paths)
     lifecycle_history = [
         {
             "state": SESSION_LIFECYCLE_RUNNING,
@@ -730,6 +1004,10 @@ def run_phase1_capture(
     polymarket_selector_refresh_count = 0
     polymarket_selector_rebind_count = 0
     polymarket_rollover_grace_sample_count = 0
+    progress_state = ForwardProgressState(
+        last_artifact_flush_at=capture_started_at,
+    )
+    last_sample_started_at: datetime | None = None
     last_completed_sample_started_at: datetime | None = None
     last_completed_sample_number = 0
     last_selected_market_id: str | None = None
@@ -742,6 +1020,7 @@ def run_phase1_capture(
         "polymarket_quotes": None,
     }
     termination_reason = "running"
+    watchdog_handler: signal.Handlers | None = None
     _write_partial_capture_summary(
         path=summary_partial_path,
         config=config,
@@ -753,12 +1032,16 @@ def run_phase1_capture(
         lifecycle_state=lifecycle_state,
         lifecycle_history=tuple(lifecycle_history),
         sample_count=0,
+        last_sample_started_at=last_sample_started_at,
         last_completed_sample_number=last_completed_sample_number,
         last_completed_sample_started_at=last_completed_sample_started_at,
+        last_artifact_flush_at=progress_state.last_artifact_flush_at,
         last_selected_market_id=last_selected_market_id,
         last_selected_market_slug=last_selected_market_slug,
         last_selected_window_id=last_selected_window_id,
         last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+        collector_output_paths=collector_output_paths,
+        collector_row_counts_by_name=collector_row_counts_by_name,
         degraded_sample_count=degraded_sample_count,
         failed_sample_count=failed_sample_count,
         empty_book_count=empty_book_count,
@@ -770,6 +1053,8 @@ def run_phase1_capture(
         polymarket_selector_refresh_count=polymarket_selector_refresh_count,
         polymarket_selector_rebind_count=polymarket_selector_rebind_count,
         polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+        chainlink_failure_started_at=None,
+        chainlink_circuit_breaker_seconds=config.chainlink_circuit_breaker_seconds,
         termination_reason=None,
     )
 
@@ -802,12 +1087,16 @@ def run_phase1_capture(
             lifecycle_state=lifecycle_state,
             lifecycle_history=tuple(lifecycle_history),
             sample_count=0,
+            last_sample_started_at=last_sample_started_at,
             last_completed_sample_number=last_completed_sample_number,
             last_completed_sample_started_at=last_completed_sample_started_at,
+            last_artifact_flush_at=progress_state.last_artifact_flush_at,
             last_selected_market_id=last_selected_market_id,
             last_selected_market_slug=last_selected_market_slug,
             last_selected_window_id=last_selected_window_id,
             last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+            collector_output_paths=collector_output_paths,
+            collector_row_counts_by_name=collector_row_counts_by_name,
             degraded_sample_count=degraded_sample_count,
             failed_sample_count=failed_sample_count,
             empty_book_count=empty_book_count,
@@ -819,21 +1108,22 @@ def run_phase1_capture(
             polymarket_selector_refresh_count=polymarket_selector_refresh_count,
             polymarket_selector_rebind_count=polymarket_selector_rebind_count,
             polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+            chainlink_failure_started_at=None,
+            chainlink_circuit_breaker_seconds=config.chainlink_circuit_breaker_seconds,
             termination_reason="uncaught_exception",
             failure_type=type(exc).__name__,
             failure_message=str(exc),
         )
         raise
     active_metadata_rows = list(metadata_rows)
-    metadata_output_raw = list(metadata_raw)
-    metadata_output_rows = list(metadata_rows)
+    _append_collector_rows(
+        collector_name="polymarket_metadata",
+        collector_output_paths=collector_output_paths,
+        collector_row_counts_by_name=collector_row_counts_by_name,
+        raw_rows=tuple(metadata_raw),
+        normalized_rows=tuple(metadata_rows),
+    )
     _, active_admitted_window_ids, _ = _admitted_family_candidates(active_metadata_rows)
-    chainlink_raw: list[dict[str, object]] = []
-    chainlink_rows: list[ChainlinkTick] = []
-    exchange_raw: list[dict[str, object]] = []
-    exchange_rows: list[ExchangeQuote] = []
-    polymarket_raw: list[dict[str, object]] = []
-    polymarket_rows: list[PolymarketQuote] = []
 
     duration_seconds = max(config.duration_seconds, 0.0)
     poll_interval_seconds = max(config.poll_interval_seconds, 0.0)
@@ -845,11 +1135,12 @@ def run_phase1_capture(
         source_name: None for source_name in CORE_CAPTURE_SOURCES
     }
     last_healthy_timestamp_by_source["polymarket_metadata"] = max(
-        (message.recv_ts for message in metadata_output_raw),
+        (message.recv_ts for message in metadata_raw),
         default=capture_started_at,
     )
     last_metadata_refresh_monotonic = capture_started_monotonic
     last_checkpoint_monotonic = capture_started_monotonic
+    last_heartbeat_monotonic = capture_started_monotonic
     last_selected_market_id: str | None = selected_market.market_id
     last_selected_market_slug: str | None = selected_market.market_slug
     last_selected_window_id: str | None = selector_diagnostics.selected_window_id
@@ -858,7 +1149,12 @@ def run_phase1_capture(
     finalized_polymarket_window_coverage: list[dict[str, object]] = []
     active_polymarket_window_id: str | None = None
     consecutive_unusable_polymarket_windows = 0
+    chainlink_failure_started_at: datetime | None = None
     termination_reason = "completed"
+    watchdog_handler = _install_forward_progress_watchdog(
+        timeout_seconds=config.forward_progress_watchdog_seconds,
+        state=progress_state,
+    )
     _write_partial_capture_summary(
         path=summary_partial_path,
         config=config,
@@ -870,12 +1166,16 @@ def run_phase1_capture(
         lifecycle_state=lifecycle_state,
         lifecycle_history=tuple(lifecycle_history),
         sample_count=sample_count,
+        last_sample_started_at=last_sample_started_at,
         last_completed_sample_number=last_completed_sample_number,
         last_completed_sample_started_at=last_completed_sample_started_at,
+        last_artifact_flush_at=progress_state.last_artifact_flush_at,
         last_selected_market_id=last_selected_market_id,
         last_selected_market_slug=last_selected_market_slug,
         last_selected_window_id=last_selected_window_id,
         last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+        collector_output_paths=collector_output_paths,
+        collector_row_counts_by_name=collector_row_counts_by_name,
         degraded_sample_count=degraded_sample_count,
         failed_sample_count=failed_sample_count,
         empty_book_count=empty_book_count,
@@ -887,13 +1187,35 @@ def run_phase1_capture(
         polymarket_selector_refresh_count=polymarket_selector_refresh_count,
         polymarket_selector_rebind_count=polymarket_selector_rebind_count,
         polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+        chainlink_failure_started_at=chainlink_failure_started_at,
+        chainlink_circuit_breaker_seconds=config.chainlink_circuit_breaker_seconds,
         termination_reason=None,
     )
+    progress_state.last_artifact_flush_at = datetime.now(UTC)
 
     try:
         while True:
             sample_started_at = datetime.now(UTC)
+            last_sample_started_at = sample_started_at
+            progress_state.last_sample_started_at = sample_started_at
             now_monotonic = time.monotonic()
+            if (
+                config.heartbeat_interval_seconds > 0
+                and now_monotonic - last_heartbeat_monotonic
+                >= config.heartbeat_interval_seconds
+            ):
+                _log_capture_heartbeat(
+                    logger=logger,
+                    sample_count=sample_count,
+                    lifecycle_state=lifecycle_state,
+                    last_completed_sample_started_at=last_completed_sample_started_at,
+                    selected_window_id=last_selected_window_id,
+                    last_artifact_flush_at=progress_state.last_artifact_flush_at,
+                    last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+                    consecutive_missing_by_source=consecutive_missing_by_source,
+                )
+                progress_state.last_heartbeat_at = sample_started_at
+                last_heartbeat_monotonic = now_monotonic
             metadata_interval_seconds = max(config.metadata_poll_interval_seconds, 0.0)
             if (
                 metadata_interval_seconds > 0
@@ -909,8 +1231,13 @@ def run_phase1_capture(
                 except Exception as exc:
                     logger.warning("scheduled metadata refresh failed: %s", exc)
                 else:
-                    metadata_output_raw.extend(refreshed_metadata_raw)
-                    metadata_output_rows.extend(refreshed_metadata_rows)
+                    _append_collector_rows(
+                        collector_name="polymarket_metadata",
+                        collector_output_paths=collector_output_paths,
+                        collector_row_counts_by_name=collector_row_counts_by_name,
+                        raw_rows=tuple(refreshed_metadata_raw),
+                        normalized_rows=tuple(refreshed_metadata_rows),
+                    )
                     active_metadata_rows = list(refreshed_metadata_rows)
                     _, active_admitted_window_ids, _ = _admitted_family_candidates(
                         active_metadata_rows
@@ -987,12 +1314,16 @@ def run_phase1_capture(
                         lifecycle_state=lifecycle_state,
                         lifecycle_history=tuple(lifecycle_history),
                         sample_count=sample_count,
+                        last_sample_started_at=last_sample_started_at,
                         last_completed_sample_number=last_completed_sample_number,
                         last_completed_sample_started_at=last_completed_sample_started_at,
+                        last_artifact_flush_at=progress_state.last_artifact_flush_at,
                         last_selected_market_id=last_selected_market_id,
                         last_selected_market_slug=last_selected_market_slug,
                         last_selected_window_id=last_selected_window_id,
                         last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+                        collector_output_paths=collector_output_paths,
+                        collector_row_counts_by_name=collector_row_counts_by_name,
                         degraded_sample_count=degraded_sample_count,
                         failed_sample_count=failed_sample_count,
                         empty_book_count=empty_book_count,
@@ -1006,11 +1337,16 @@ def run_phase1_capture(
                         polymarket_rollover_grace_sample_count=(
                             polymarket_rollover_grace_sample_count
                         ),
+                        chainlink_failure_started_at=chainlink_failure_started_at,
+                        chainlink_circuit_breaker_seconds=(
+                            config.chainlink_circuit_breaker_seconds
+                        ),
                         termination_reason=(
                             termination_reason if termination_reason != "completed" else None
                         ),
                     )
                     last_checkpoint_monotonic = now_monotonic
+                    progress_state.last_artifact_flush_at = datetime.now(UTC)
                 if termination_reason != "completed":
                     break
                 if deadline is None:
@@ -1093,9 +1429,14 @@ def run_phase1_capture(
                 due=due_by_source["polymarket_quotes"],
             )
             if polymarket_resolution.metadata_raw_rows:
-                metadata_output_raw.extend(polymarket_resolution.metadata_raw_rows)
+                _append_collector_rows(
+                    collector_name="polymarket_metadata",
+                    collector_output_paths=collector_output_paths,
+                    collector_row_counts_by_name=collector_row_counts_by_name,
+                    raw_rows=polymarket_resolution.metadata_raw_rows,
+                    normalized_rows=polymarket_resolution.metadata_rows,
+                )
             if polymarket_resolution.metadata_rows:
-                metadata_output_rows.extend(polymarket_resolution.metadata_rows)
                 active_metadata_rows = list(polymarket_resolution.metadata_rows)
                 active_admitted_window_ids = dict(polymarket_resolution.admitted_window_ids)
                 last_healthy_timestamp_by_source["polymarket_metadata"] = max(
@@ -1177,6 +1518,11 @@ def run_phase1_capture(
                 last_capture_monotonic[source_name] = now_monotonic
                 if result.status == "success":
                     last_healthy_timestamp_by_source[source_name] = sample_started_at
+                    if source_name == "chainlink":
+                        chainlink_failure_started_at = None
+                elif source_name == "chainlink" and result.status != "not_due":
+                    if chainlink_failure_started_at is None:
+                        chainlink_failure_started_at = sample_started_at
 
             if (
                 _polymarket_failure_semantics(polymarket_result)
@@ -1184,12 +1530,27 @@ def run_phase1_capture(
             ):
                 empty_book_count += 1
 
-            chainlink_raw.extend(chainlink_result.raw_rows)
-            chainlink_rows.extend(chainlink_result.normalized_rows)
-            exchange_raw.extend(exchange_result.raw_rows)
-            exchange_rows.extend(exchange_result.normalized_rows)
-            polymarket_raw.extend(polymarket_result.raw_rows)
-            polymarket_rows.extend(polymarket_result.normalized_rows)
+            _append_collector_rows(
+                collector_name="chainlink",
+                collector_output_paths=collector_output_paths,
+                collector_row_counts_by_name=collector_row_counts_by_name,
+                raw_rows=chainlink_result.raw_rows,
+                normalized_rows=chainlink_result.normalized_rows,
+            )
+            _append_collector_rows(
+                collector_name="exchange",
+                collector_output_paths=collector_output_paths,
+                collector_row_counts_by_name=collector_row_counts_by_name,
+                raw_rows=exchange_result.raw_rows,
+                normalized_rows=exchange_result.normalized_rows,
+            )
+            _append_collector_rows(
+                collector_name="polymarket_quotes",
+                collector_output_paths=collector_output_paths,
+                collector_row_counts_by_name=collector_row_counts_by_name,
+                raw_rows=polymarket_result.raw_rows,
+                normalized_rows=polymarket_result.normalized_rows,
+            )
 
             degraded_sources = tuple(
                 source_name
@@ -1235,10 +1596,24 @@ def run_phase1_capture(
             )
 
             if (
-                consecutive_missing_by_source["chainlink"]
-                >= config.max_consecutive_chainlink_failures
+                chainlink_failure_started_at is not None
+                and (
+                    consecutive_missing_by_source["chainlink"]
+                    >= config.max_consecutive_chainlink_failures
+                    or (
+                        sample_started_at - chainlink_failure_started_at
+                    ).total_seconds()
+                    >= config.chainlink_circuit_breaker_seconds
+                )
             ):
-                termination_reason = "chainlink_failure_threshold_exceeded"
+                termination_reason = (
+                    "chainlink_circuit_breaker_exceeded"
+                    if (
+                        sample_started_at - chainlink_failure_started_at
+                    ).total_seconds()
+                    >= config.chainlink_circuit_breaker_seconds
+                    else "chainlink_failure_threshold_exceeded"
+                )
             elif (
                 consecutive_missing_by_source["exchange"]
                 >= config.max_consecutive_exchange_failures
@@ -1287,6 +1662,8 @@ def run_phase1_capture(
             last_selected_market_id = sample_market.market_id
             last_selected_market_slug = sample_market.market_slug
             last_selected_window_id = selected_window_id
+            progress_state.last_sample_completed_at = sample_started_at
+            _reset_forward_progress_watchdog(config.forward_progress_watchdog_seconds)
 
             if (
                 termination_reason != "completed"
@@ -1304,12 +1681,16 @@ def run_phase1_capture(
                     lifecycle_state=lifecycle_state,
                     lifecycle_history=tuple(lifecycle_history),
                     sample_count=sample_count,
+                    last_sample_started_at=last_sample_started_at,
                     last_completed_sample_number=last_completed_sample_number,
                     last_completed_sample_started_at=last_completed_sample_started_at,
+                    last_artifact_flush_at=progress_state.last_artifact_flush_at,
                     last_selected_market_id=last_selected_market_id,
                     last_selected_market_slug=last_selected_market_slug,
                     last_selected_window_id=last_selected_window_id,
                     last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+                    collector_output_paths=collector_output_paths,
+                    collector_row_counts_by_name=collector_row_counts_by_name,
                     degraded_sample_count=degraded_sample_count,
                     failed_sample_count=failed_sample_count,
                     empty_book_count=empty_book_count,
@@ -1323,11 +1704,16 @@ def run_phase1_capture(
                     polymarket_rollover_grace_sample_count=(
                         polymarket_rollover_grace_sample_count
                     ),
+                    chainlink_failure_started_at=chainlink_failure_started_at,
+                    chainlink_circuit_breaker_seconds=(
+                        config.chainlink_circuit_breaker_seconds
+                    ),
                     termination_reason=(
                         termination_reason if termination_reason != "completed" else None
                     ),
                 )
                 last_checkpoint_monotonic = now_monotonic
+                progress_state.last_artifact_flush_at = datetime.now(UTC)
 
             if termination_reason != "completed":
                 logger.error("terminating capture early: %s", termination_reason)
@@ -1360,20 +1746,32 @@ def run_phase1_capture(
                 history=lifecycle_history,
                 current_state=lifecycle_state,
                 next_state=_final_lifecycle_state(
-                    termination_reason="uncaught_exception",
+                    termination_reason=(
+                        "watchdog_abort"
+                        if isinstance(exc, CaptureWatchdogAbort)
+                        else "uncaught_exception"
+                    ),
                     failure_type=type(exc).__name__,
                 ),
                 recorded_at=datetime.now(UTC),
-                reason="uncaught_exception",
+                reason=(
+                    "watchdog_abort"
+                    if isinstance(exc, CaptureWatchdogAbort)
+                    else "uncaught_exception"
+                ),
             ),
             lifecycle_history=tuple(lifecycle_history),
             sample_count=sample_count,
+            last_sample_started_at=last_sample_started_at,
             last_completed_sample_number=last_completed_sample_number,
             last_completed_sample_started_at=last_completed_sample_started_at,
+            last_artifact_flush_at=progress_state.last_artifact_flush_at,
             last_selected_market_id=last_selected_market_id,
             last_selected_market_slug=last_selected_market_slug,
             last_selected_window_id=last_selected_window_id,
             last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+            collector_output_paths=collector_output_paths,
+            collector_row_counts_by_name=collector_row_counts_by_name,
             degraded_sample_count=degraded_sample_count,
             failed_sample_count=failed_sample_count,
             empty_book_count=empty_book_count,
@@ -1385,7 +1783,13 @@ def run_phase1_capture(
             polymarket_selector_refresh_count=polymarket_selector_refresh_count,
             polymarket_selector_rebind_count=polymarket_selector_rebind_count,
             polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
-            termination_reason="uncaught_exception",
+            chainlink_failure_started_at=chainlink_failure_started_at,
+            chainlink_circuit_breaker_seconds=config.chainlink_circuit_breaker_seconds,
+            termination_reason=(
+                "watchdog_abort"
+                if isinstance(exc, CaptureWatchdogAbort)
+                else "uncaught_exception"
+            ),
             failure_type=type(exc).__name__,
             failure_message=str(exc),
         )
@@ -1402,43 +1806,9 @@ def run_phase1_capture(
                 )
             )
 
-        collectors = (
-            _write_dataset(
-                config,
-                collector_name="polymarket_metadata",
-                raw_dataset="polymarket_metadata",
-                normalized_dataset="market_metadata_events",
-                capture_date=capture_date,
-                raw_rows=metadata_output_raw,
-                normalized_rows=metadata_output_rows,
-            ),
-            _write_dataset(
-                config,
-                collector_name="chainlink",
-                raw_dataset="chainlink",
-                normalized_dataset="chainlink_ticks",
-                capture_date=capture_date,
-                raw_rows=chainlink_raw,
-                normalized_rows=chainlink_rows,
-            ),
-            _write_dataset(
-                config,
-                collector_name="exchange",
-                raw_dataset="exchange",
-                normalized_dataset="exchange_quotes",
-                capture_date=capture_date,
-                raw_rows=exchange_raw,
-                normalized_rows=exchange_rows,
-            ),
-            _write_dataset(
-                config,
-                collector_name="polymarket_quotes",
-                raw_dataset="polymarket_quotes",
-                normalized_dataset="polymarket_quotes",
-                capture_date=capture_date,
-                raw_rows=polymarket_raw,
-                normalized_rows=polymarket_rows,
-            ),
+        collectors = _collector_artifact_sets(
+            collector_output_paths,
+            collector_row_counts_by_name,
         )
 
         session_diagnostics = SessionDiagnostics(
@@ -1514,12 +1884,16 @@ def run_phase1_capture(
             lifecycle_state=lifecycle_state,
             lifecycle_history=tuple(lifecycle_history),
             sample_count=sample_count,
+            last_sample_started_at=last_sample_started_at,
             last_completed_sample_number=last_completed_sample_number,
             last_completed_sample_started_at=last_completed_sample_started_at,
+            last_artifact_flush_at=progress_state.last_artifact_flush_at,
             last_selected_market_id=last_selected_market_id,
             last_selected_market_slug=last_selected_market_slug,
             last_selected_window_id=last_selected_window_id,
             last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+            collector_output_paths=collector_output_paths,
+            collector_row_counts_by_name=collector_row_counts_by_name,
             degraded_sample_count=degraded_sample_count,
             failed_sample_count=failed_sample_count,
             empty_book_count=empty_book_count,
@@ -1531,18 +1905,29 @@ def run_phase1_capture(
             polymarket_selector_refresh_count=polymarket_selector_refresh_count,
             polymarket_selector_rebind_count=polymarket_selector_rebind_count,
             polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+            chainlink_failure_started_at=chainlink_failure_started_at,
+            chainlink_circuit_breaker_seconds=config.chainlink_circuit_breaker_seconds,
             termination_reason=termination_reason,
         )
+        progress_state.last_artifact_flush_at = datetime.now(UTC)
     except BaseException as exc:
         lifecycle_state = _append_lifecycle_transition(
             history=lifecycle_history,
             current_state=lifecycle_state,
             next_state=_final_lifecycle_state(
-                termination_reason="uncaught_exception",
+                termination_reason=(
+                    "watchdog_abort"
+                    if isinstance(exc, CaptureWatchdogAbort)
+                    else "uncaught_exception"
+                ),
                 failure_type=type(exc).__name__,
             ),
             recorded_at=datetime.now(UTC),
-            reason="uncaught_exception",
+            reason=(
+                "watchdog_abort"
+                if isinstance(exc, CaptureWatchdogAbort)
+                else "uncaught_exception"
+            ),
         )
         _write_partial_capture_summary(
             path=summary_partial_path,
@@ -1555,12 +1940,16 @@ def run_phase1_capture(
             lifecycle_state=lifecycle_state,
             lifecycle_history=tuple(lifecycle_history),
             sample_count=sample_count,
+            last_sample_started_at=last_sample_started_at,
             last_completed_sample_number=last_completed_sample_number,
             last_completed_sample_started_at=last_completed_sample_started_at,
+            last_artifact_flush_at=progress_state.last_artifact_flush_at,
             last_selected_market_id=last_selected_market_id,
             last_selected_market_slug=last_selected_market_slug,
             last_selected_window_id=last_selected_window_id,
             last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+            collector_output_paths=collector_output_paths,
+            collector_row_counts_by_name=collector_row_counts_by_name,
             degraded_sample_count=degraded_sample_count,
             failed_sample_count=failed_sample_count,
             empty_book_count=empty_book_count,
@@ -1572,10 +1961,17 @@ def run_phase1_capture(
             polymarket_selector_refresh_count=polymarket_selector_refresh_count,
             polymarket_selector_rebind_count=polymarket_selector_rebind_count,
             polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
-            termination_reason="uncaught_exception",
+            chainlink_failure_started_at=chainlink_failure_started_at,
+            chainlink_circuit_breaker_seconds=config.chainlink_circuit_breaker_seconds,
+            termination_reason=(
+                "watchdog_abort"
+                if isinstance(exc, CaptureWatchdogAbort)
+                else "uncaught_exception"
+            ),
             failure_type=type(exc).__name__,
             failure_message=str(exc),
         )
+        _clear_forward_progress_watchdog(watchdog_handler)
         raise
 
     for collector in collectors:
@@ -1588,6 +1984,7 @@ def run_phase1_capture(
             collector.normalized_path,
         )
 
+    _clear_forward_progress_watchdog(watchdog_handler)
     return result
 
 
@@ -1859,6 +2256,7 @@ def _collect_chainlink_snapshot_tick(
             ),
             normalized_rows=(),
             retries=decimals_result.retries,
+            failure_class=decimals_result.failure_class,
             failure_type=decimals_result.failure_type,
             failure_message=decimals_result.failure_message,
             details={"rpc_method": "decimals"},
@@ -1902,6 +2300,7 @@ def _collect_chainlink_snapshot_tick(
             ),
             normalized_rows=(),
             retries=decimals_result.retries + rpc_response.retries,
+            failure_class=rpc_response.failure_class,
             failure_type=rpc_response.failure_type,
             failure_message=rpc_response.failure_message,
             details={"rpc_method": "latestRoundData"},
@@ -2018,6 +2417,7 @@ def _collect_chainlink_stream_tick(
             ),
             normalized_rows=(),
             retries=response.retries,
+            failure_class=response.failure_class,
             failure_type=response.failure_type,
             failure_message=response.failure_message,
             http_status=response.http_status,
@@ -2218,6 +2618,7 @@ def _collect_exchange_quotes(
     normalized_rows: list[ExchangeQuote] = []
     total_retries = 0
     venue_statuses: dict[str, str] = {}
+    failure_class: str | None = None
     failure_type: str | None = None
     failure_message: str | None = None
 
@@ -2254,6 +2655,7 @@ def _collect_exchange_quotes(
         total_retries += fetch_result.retries
         if fetch_result.status != "success":
             venue_statuses[venue_id] = fetch_result.status
+            failure_class = failure_class or fetch_result.failure_class
             failure_type = fetch_result.failure_type
             failure_message = fetch_result.failure_message
             raw_rows.append(
@@ -2304,6 +2706,7 @@ def _collect_exchange_quotes(
         raw_rows=tuple(raw_rows),
         normalized_rows=tuple(normalized_rows),
         retries=total_retries,
+        failure_class=failure_class,
         failure_type=failure_type,
         failure_message=failure_message,
         details={
@@ -3368,10 +3771,11 @@ def _run_with_retries(
                 attempts=attempts,
                 retries=max(0, attempts - 1),
                 http_status=status,
+                retryable=False,
                 headers=headers,
             )
         except Exception as exc:  # pragma: no cover - exercised by caller tests
-            retryable, http_status = _classify_retryable_exception(exc)
+            retryable, http_status, failure_class = _classify_retryable_exception(exc)
             failure_type = type(exc).__name__
             failure_message = str(exc)
             if not retryable:
@@ -3381,8 +3785,10 @@ def _run_with_retries(
                     attempts=attempts,
                     retries=max(0, attempts - 1),
                     failure_type=failure_type,
+                    failure_class=failure_class,
                     failure_message=failure_message,
                     http_status=http_status,
+                    retryable=False,
                 )
             if attempts > max_retries:
                 return FetchResult(
@@ -3391,8 +3797,10 @@ def _run_with_retries(
                     attempts=attempts,
                     retries=max(0, attempts - 1),
                     failure_type=failure_type,
+                    failure_class=failure_class,
                     failure_message=failure_message,
                     http_status=http_status,
+                    retryable=True,
                 )
             backoff_seconds = _retry_backoff_seconds(
                 attempt=attempts,
@@ -3401,10 +3809,11 @@ def _run_with_retries(
             )
             if logger is not None:
                 logger.warning(
-                    "%s fetch attempt %s/%s failed with %s: %s; retrying in %.3fs",
+                    "%s fetch attempt %s/%s failed class=%s type=%s: %s; retrying in %.3fs",
                     source_name,
                     attempts,
                     max_retries + 1,
+                    failure_class,
                     failure_type,
                     failure_message,
                     backoff_seconds,
@@ -3412,14 +3821,32 @@ def _run_with_retries(
             time.sleep(backoff_seconds)
 
 
-def _classify_retryable_exception(exc: Exception) -> tuple[bool, int | None]:
+def _classify_retryable_exception(exc: Exception) -> tuple[bool, int | None, str]:
     if isinstance(exc, HTTPError):
-        return exc.code in RETRYABLE_HTTP_STATUS_CODES, exc.code
+        if exc.code == 429:
+            return True, exc.code, "retryable_http_429"
+        if exc.code >= 500:
+            return True, exc.code, "retryable_http_5xx"
+        return False, exc.code, f"terminal_http_{exc.code}"
     if isinstance(exc, URLError):
-        return True, None
+        reason = exc.reason
+        if isinstance(reason, socket.gaierror):
+            return True, None, "dns_resolution_failure"
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return True, None, "timeout"
+        message = str(reason or exc).lower()
+        if "name resolution" in message or "temporary failure in name resolution" in message:
+            return True, None, "dns_resolution_failure"
+        if "timed out" in message or "timeout" in message:
+            return True, None, "timeout"
+        return True, None, "url_error"
     if isinstance(exc, (TimeoutError, socket.timeout, ConnectionResetError, OSError)):
-        return True, None
-    return False, None
+        if isinstance(exc, ConnectionResetError):
+            return True, None, "connection_reset"
+        if isinstance(exc, (TimeoutError, socket.timeout)):
+            return True, None, "timeout"
+        return True, None, "os_error"
+    return False, None, "terminal_exception"
 
 
 def _retry_backoff_seconds(

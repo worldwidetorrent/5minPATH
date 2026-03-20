@@ -96,6 +96,9 @@ Optional resilience tuning:
   --max-fetch-retries 3 \
   --base-backoff-seconds 0.5 \
   --max-backoff-seconds 5 \
+  --heartbeat-interval-seconds 60 \
+  --forward-progress-watchdog-seconds 300 \
+  --chainlink-circuit-breaker-seconds 300 \
   --max-consecutive-polymarket-failures 3 \
   --max-consecutive-polymarket-failures-in-grace 5 \
   --max-consecutive-unusable-polymarket-windows 2 \
@@ -120,10 +123,13 @@ Optional resilience tuning:
 Crash-safe session checkpointing:
 
 - the collector appends `sample_diagnostics.jsonl` as each sample completes; it is no longer an end-of-run-only dump
+- the collector now appends raw and normalized session rows incrementally during the run, so partial sessions keep their landed market/oracle/quote data instead of waiting for one end-of-run write
 - the collector rewrites `summary.partial.json` on a fixed checkpoint cadence; default is every `60` seconds
-- `summary.partial.json` includes the lifecycle state/history, last completed sample number, last healthy timestamp per source, current selected `market_id` / slug / `window_id`, and rolling failure counters
+- `summary.partial.json` includes the lifecycle state/history, last completed sample number, last sample started timestamp, last artifact flush timestamp, last healthy timestamp per source, current selected `market_id` / slug / `window_id`, per-collector output paths/counts, and rolling failure counters
 - if a long run dies before finalization, `summary.partial.json` plus `sample_diagnostics.jsonl` are the source of truth for the partial session record
 - lifecycle states are explicit and machine-readable: `running`, `degraded`, `completed`, `failed_cleanly`, `aborted_watchdog`, `aborted_source_failure`
+- the collector now emits periodic heartbeat log lines and aborts with `aborted_watchdog` if no sample completes within the configured forward-progress watchdog window
+- repeated Chainlink network failure is now bounded by both request retry/backoff and a run-level circuit breaker; it either recovers or terminates cleanly instead of running as a zombie session
 
 ## Output layout
 
@@ -152,6 +158,7 @@ Healthy collectors produce log lines showing:
 - one or more Polymarket quotes captured for the currently selected admitted family market
 - capture-schedule details showing effective per-source interval and whether boundary burst mode is active for quote/oracle samples
 - retry warnings only when a source is recovering, not on every sample
+- heartbeat lines showing sample number, lifecycle, last completed sample, selected window, last flush time, and per-source health summary
 - degraded samples are logged explicitly when one source is temporarily impaired
 - Polymarket quote semantics are split between `valid_empty_book`, `quote_unavailable`, and `binding_invalid`
 - Polymarket 404s near rollover trigger metadata refresh and selector re-evaluation before the session treats the binding as invalid
@@ -204,6 +211,7 @@ For a hardened pilot, also confirm:
 - `session_diagnostics.termination_reason` is `completed`
 - `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
 - `summary.partial.json` advances during the run and exposes `lifecycle_state`, `lifecycle_history`, `last_completed_sample_number`, `last_healthy_timestamp_by_source`, `selected_market_id`, `selected_market_slug`, and `selected_window_id`
+- `summary.partial.json` also exposes `last_sample_started_at`, `last_artifact_flush_at`, `collector_outputs`, `chainlink_failure_started_at`, and the active circuit-breaker/watchdog configuration
 - `admission_summary.json` reports family-compliance counts and off-family switch count from the final selected market/window binding per sample, while metadata-strip breadth and ambiguity are reported separately from family drift; it also includes degraded samples inside/outside rollover grace, Chainlink continuity, exchange venue continuity, mapped window count, open-anchor confidence breakdown, and `snapshot_eligible_sample_count`
 - `admission_summary.json` now reports `chainlink_continuity.oracle_source_count` so the pilot can be judged on the actual oracle source used, not a generic Chainlink label
 - unit regression coverage now pins the public-stream boundary-validation baseline, including the cross-midnight admission rollup, zero off-family drift, explicit `chainlink_stream_public_delayed` lineage, nonzero anchor confidence, and nonzero snapshot eligibility
@@ -211,6 +219,18 @@ For a hardened pilot, also confirm:
 - `valid_empty_book` samples do not terminate the session by themselves; they now degrade the current window instead of incrementing the same hard-stop counter used for quote-unavailable or binding-invalid states
 - any degraded Polymarket sample records `seconds_remaining`, `within_rollover_grace_window`, refresh-attempt flags, and final bound `market_id` / `window_id` in `source_results.polymarket_quotes.details`
 - `admission_summary.json` now includes `empty_book_count_by_window`, `empty_book_count_by_slug`, and a per-window quote-coverage table with continuity flags plus `window_verdict`
+
+If a long run fails before `summary.json` exists, summarize the checkpointed session with:
+
+```bash
+.venv/bin/python -m rtds.cli.summarize_partial_capture \
+  artifacts/collect/date=YYYY-MM-DD/session=<session>/summary.partial.json
+```
+
+That command writes:
+
+- `partial_session_summary.json`
+- `partial_admission_summary.json` when the partial collector outputs are complete enough for replay-grade evaluation
 
 ## Pinned baseline sessions
 

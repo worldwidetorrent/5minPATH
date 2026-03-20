@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 import pytest
 
 from rtds.collectors.phase1_capture import (
     DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS,
+    CaptureWatchdogAbort,
     FetchResult,
     MetadataSelectionDiagnostics,
     Phase1CaptureConfig,
@@ -547,6 +550,46 @@ def test_run_with_retries_retries_then_succeeds(monkeypatch) -> None:
     assert sleep_calls == [0.5, 1.0]
 
 
+def test_run_with_retries_classifies_dns_resolution_failures(monkeypatch) -> None:
+    monkeypatch.setattr("rtds.collectors.phase1_capture.random.uniform", lambda start, end: 0.0)
+    monkeypatch.setattr("rtds.collectors.phase1_capture.time.sleep", lambda seconds: None)
+
+    result = _run_with_retries(
+        source_name="chainlink",
+        operation=lambda: (_ for _ in ()).throw(
+            URLError(socket.gaierror(-3, "Temporary failure in name resolution"))
+        ),
+        max_retries=1,
+        base_backoff_seconds=0.5,
+        max_backoff_seconds=5.0,
+        logger=_logger(),
+    )
+
+    assert result.status == "retry_exhausted"
+    assert result.failure_class == "dns_resolution_failure"
+    assert result.retryable is True
+
+
+def test_run_with_retries_treats_http_429_as_retryable(monkeypatch) -> None:
+    monkeypatch.setattr("rtds.collectors.phase1_capture.random.uniform", lambda start, end: 0.0)
+    monkeypatch.setattr("rtds.collectors.phase1_capture.time.sleep", lambda seconds: None)
+
+    result = _run_with_retries(
+        source_name="exchange",
+        operation=lambda: (_ for _ in ()).throw(
+            HTTPError("https://example.com", 429, "Too Many Requests", {}, None)
+        ),
+        max_retries=1,
+        base_backoff_seconds=0.5,
+        max_backoff_seconds=5.0,
+        logger=_logger(),
+    )
+
+    assert result.status == "retry_exhausted"
+    assert result.failure_class == "retryable_http_429"
+    assert result.retryable is True
+
+
 def test_run_phase1_capture_does_not_hard_stop_on_valid_empty_book_streak(
     tmp_path: Path,
     monkeypatch,
@@ -883,6 +926,28 @@ def test_run_phase1_capture_leaves_partial_artifacts_after_crash(
         "failed_cleanly",
     ]
     assert len(diagnostics_path.read_text(encoding="utf-8").splitlines()) == 2
+    metadata_raw_path = (
+        tmp_path
+        / "data"
+        / "raw"
+        / "polymarket_metadata"
+        / "date=2026-03-13"
+        / "session=test-session"
+        / "part-00000.jsonl"
+    )
+    chainlink_raw_path = (
+        tmp_path
+        / "data"
+        / "raw"
+        / "chainlink"
+        / "date=2026-03-13"
+        / "session=test-session"
+        / "part-00000.jsonl"
+    )
+    assert metadata_raw_path.exists()
+    assert chainlink_raw_path.exists()
+    assert len(metadata_raw_path.read_text(encoding="utf-8").splitlines()) == 3
+    assert len(chainlink_raw_path.read_text(encoding="utf-8").splitlines()) == 2
 
 
 def test_run_phase1_capture_leaves_partial_artifacts_after_startup_failure(
@@ -926,6 +991,78 @@ def test_run_phase1_capture_leaves_partial_artifacts_after_startup_failure(
         "running",
         "failed_cleanly",
     ]
+
+
+def test_run_phase1_capture_marks_watchdog_abort_and_flushes_partial_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    active_candidate = _metadata_candidate()
+    metadata_raw = _metadata_raw(active_candidate.market_id)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=active_candidate.market_id,
+        selected_market_slug=active_candidate.market_slug,
+        selected_window_id="btc-5m-20260313T120500Z",
+        candidate_count=1,
+        admitted_count=1,
+        rejected_count_by_reason={},
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_metadata",
+        lambda config, logger: (
+            [metadata_raw],
+            [active_candidate],
+            active_candidate,
+            selector_diagnostics,
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_ticks",
+        lambda config, logger: (_ for _ in ()).throw(
+            CaptureWatchdogAbort("watchdog timed out")
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._install_forward_progress_watchdog",
+        lambda timeout_seconds, state: None,
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._clear_forward_progress_watchdog",
+        lambda previous_handler: None,
+    )
+    monotonic_values = iter([0.0, 1.0])
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    with pytest.raises(CaptureWatchdogAbort, match="watchdog timed out"):
+        run_phase1_capture(
+            Phase1CaptureConfig(
+                data_root=tmp_path / "data",
+                artifacts_root=tmp_path / "artifacts",
+                logs_root=tmp_path / "logs",
+                temp_root=tmp_path / "tmp",
+                session_id="test-session",
+                capture_started_at=datetime(2026, 3, 13, 12, 5, 0, tzinfo=UTC),
+                duration_seconds=0.0,
+            ),
+            logger=_logger(),
+        )
+
+    partial_summary = json.loads(
+        (
+            tmp_path
+            / "artifacts"
+            / "collect"
+            / "date=2026-03-13"
+            / "session=test-session"
+            / "summary.partial.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert partial_summary["lifecycle_state"] == "aborted_watchdog"
+    assert partial_summary["termination_reason"] == "watchdog_abort"
+    assert partial_summary["failure_type"] == "CaptureWatchdogAbort"
 
 
 def test_run_with_retries_allows_http_payload_with_empty_error_list() -> None:

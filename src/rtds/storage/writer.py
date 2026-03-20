@@ -147,6 +147,26 @@ def append_jsonl_row(path: str | Path, row: Mapping[str, object] | object) -> Pa
     return output_path
 
 
+def append_jsonl_rows(
+    path: str | Path,
+    rows: Iterable[Mapping[str, object] | object],
+) -> Path:
+    """Append stable JSONL rows to an existing file."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            payload = (
+                {str(key): serialize_value(value) for key, value in row.items()}
+                if isinstance(row, Mapping)
+                else serialize_value(row)
+            )
+            handle.write(json_dumps_stable(payload))
+            handle.write("\n")
+    return output_path
+
+
 def write_json_file(path: str | Path, payload: Mapping[str, object] | object) -> Path:
     """Write one stable JSON payload."""
 
@@ -221,6 +241,7 @@ __all__ = [
     "ReferenceWriteResult",
     "WindowReferenceWriter",
     "append_jsonl_row",
+    "append_jsonl_rows",
     "json_dumps_stable",
     "serialize_value",
     "write_csv_rows",
