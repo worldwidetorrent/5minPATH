@@ -19,6 +19,7 @@ from rtds.collectors.phase1_capture import (
     DEFAULT_CHAINLINK_STREAMS_BASE_URL,
     DEFAULT_CHAINLINK_STREAMS_FEED_ID,
     DEFAULT_CHAINLINK_STREAMS_PAGE_URL,
+    DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
     DEFAULT_DURATION_SECONDS,
     DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS,
     DEFAULT_MAX_BACKOFF_SECONDS,
@@ -160,6 +161,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--logs-root", default="logs")
     parser.add_argument("--temp-root", default="tmp")
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "--checkpoint-interval-seconds",
+        type=float,
+        default=DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
+    )
     parser.add_argument("--metadata-limit", type=int, default=DEFAULT_METADATA_LIMIT)
     parser.add_argument("--metadata-pages", type=int, default=DEFAULT_METADATA_PAGES)
     parser.add_argument("--duration-seconds", type=float, default=DEFAULT_DURATION_SECONDS)
@@ -327,6 +333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         temp_root=Path(args.temp_root),
         session_id=session_id,
         timeout_seconds=args.timeout_seconds,
+        checkpoint_interval_seconds=args.checkpoint_interval_seconds,
         metadata_limit=args.metadata_limit,
         metadata_pages=args.metadata_pages,
         duration_seconds=args.duration_seconds,

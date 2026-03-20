@@ -46,13 +46,14 @@ from rtds.normalizers.exchange import (
 )
 from rtds.normalizers.polymarket import normalize_polymarket_quote
 from rtds.schemas.normalized import ExchangeQuote, PolymarketQuote
-from rtds.storage.writer import write_json_file, write_jsonl_rows
+from rtds.storage.writer import append_jsonl_row, write_json_file, write_jsonl_rows
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_METADATA_LIMIT = 500
 DEFAULT_METADATA_PAGES = 1
 DEFAULT_DURATION_SECONDS = 0.0
 DEFAULT_POLL_INTERVAL_SECONDS = 60.0
+DEFAULT_CHECKPOINT_INTERVAL_SECONDS = 60.0
 DEFAULT_METADATA_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
 DEFAULT_CHAINLINK_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
 DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS = DEFAULT_POLL_INTERVAL_SECONDS
@@ -110,6 +111,7 @@ class Phase1CaptureConfig:
     metadata_pages: int = DEFAULT_METADATA_PAGES
     duration_seconds: float = DEFAULT_DURATION_SECONDS
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
+    checkpoint_interval_seconds: float = DEFAULT_CHECKPOINT_INTERVAL_SECONDS
     metadata_poll_interval_seconds: float = DEFAULT_METADATA_POLL_INTERVAL_SECONDS
     chainlink_poll_interval_seconds: float = DEFAULT_CHAINLINK_POLL_INTERVAL_SECONDS
     exchange_poll_interval_seconds: float = DEFAULT_EXCHANGE_POLL_INTERVAL_SECONDS
@@ -275,6 +277,7 @@ class SessionDiagnostics:
     polymarket_rollover_grace_sample_count: int
     termination_reason: str
     sample_diagnostics_path: Path
+    summary_partial_path: Path | None = None
     polymarket_window_coverage: tuple[dict[str, object], ...] = ()
     max_consecutive_unusable_polymarket_windows: int = (
         DEFAULT_MAX_CONSECUTIVE_UNUSABLE_POLYMARKET_WINDOWS
@@ -315,6 +318,9 @@ class SessionDiagnostics:
             ),
             "termination_reason": self.termination_reason,
             "sample_diagnostics_path": str(self.sample_diagnostics_path),
+            "summary_partial_path": (
+                str(self.summary_partial_path) if self.summary_partial_path is not None else None
+            ),
         }
 
 
@@ -524,6 +530,105 @@ def _finalize_polymarket_window_coverage(
     }
 
 
+def _artifact_summary_paths(
+    config: Phase1CaptureConfig,
+    *,
+    capture_date: date,
+) -> tuple[Path, Path, Path]:
+    summary_path = (
+        config.artifacts_root
+        / "collect"
+        / f"date={capture_date.isoformat()}"
+        / f"session={config.session_id}"
+        / "summary.json"
+    )
+    return (
+        summary_path,
+        summary_path.with_name("summary.partial.json"),
+        summary_path.with_name("sample_diagnostics.jsonl"),
+    )
+
+
+def _write_partial_capture_summary(
+    *,
+    path: Path,
+    config: Phase1CaptureConfig,
+    capture_date: date,
+    capture_started_at: datetime,
+    summary_path: Path,
+    sample_diagnostics_path: Path,
+    selector_diagnostics: MetadataSelectionDiagnostics,
+    session_status: str,
+    sample_count: int,
+    last_completed_sample_number: int,
+    last_completed_sample_started_at: datetime | None,
+    last_selected_market_id: str | None,
+    last_selected_market_slug: str | None,
+    last_selected_window_id: str | None,
+    last_healthy_timestamp_by_source: dict[str, datetime | None],
+    degraded_sample_count: int,
+    failed_sample_count: int,
+    empty_book_count: int,
+    retry_count_by_source: Counter[str],
+    retry_exhaustion_count_by_source: Counter[str],
+    source_failure_count_by_source: Counter[str],
+    max_consecutive_missing_by_source: Counter[str],
+    polymarket_failure_count_by_class: Counter[str],
+    polymarket_selector_refresh_count: int,
+    polymarket_selector_rebind_count: int,
+    polymarket_rollover_grace_sample_count: int,
+    termination_reason: str | None,
+    failure_type: str | None = None,
+    failure_message: str | None = None,
+) -> Path:
+    return write_json_file(
+        path,
+        {
+            "session_id": config.session_id,
+            "capture_date": capture_date.isoformat(),
+            "capture_started_at": capture_started_at,
+            "checkpoint_written_at": datetime.now(UTC),
+            "session_status": session_status,
+            "checkpoint_interval_seconds": config.checkpoint_interval_seconds,
+            "summary_path": str(summary_path),
+            "sample_diagnostics_path": str(sample_diagnostics_path),
+            "sample_count": sample_count,
+            "last_completed_sample_number": last_completed_sample_number,
+            "last_completed_sample_started_at": last_completed_sample_started_at,
+            "selected_market_id": last_selected_market_id,
+            "selected_market_slug": last_selected_market_slug,
+            "selected_window_id": last_selected_window_id,
+            "selector_diagnostics": selector_diagnostics.to_summary_dict(),
+            "last_healthy_timestamp_by_source": {
+                source_name: timestamp
+                for source_name, timestamp in sorted(last_healthy_timestamp_by_source.items())
+            },
+            "degraded_sample_count": degraded_sample_count,
+            "failed_sample_count": failed_sample_count,
+            "empty_book_count": empty_book_count,
+            "retry_count_by_source": dict(sorted(retry_count_by_source.items())),
+            "retry_exhaustion_count_by_source": dict(
+                sorted(retry_exhaustion_count_by_source.items())
+            ),
+            "source_failure_count_by_source": dict(
+                sorted(source_failure_count_by_source.items())
+            ),
+            "max_consecutive_missing_by_source": dict(
+                sorted(max_consecutive_missing_by_source.items())
+            ),
+            "polymarket_failure_count_by_class": dict(
+                sorted(polymarket_failure_count_by_class.items())
+            ),
+            "polymarket_selector_refresh_count": polymarket_selector_refresh_count,
+            "polymarket_selector_rebind_count": polymarket_selector_rebind_count,
+            "polymarket_rollover_grace_sample_count": polymarket_rollover_grace_sample_count,
+            "termination_reason": termination_reason,
+            "failure_type": failure_type,
+            "failure_message": failure_message,
+        },
+    )
+
+
 def run_phase1_capture(
     config: Phase1CaptureConfig,
     *,
@@ -544,13 +649,18 @@ def run_phase1_capture(
     metadata_output_raw = list(metadata_raw)
     metadata_output_rows = list(metadata_rows)
     _, active_admitted_window_ids, _ = _admitted_family_candidates(active_metadata_rows)
+    summary_path, summary_partial_path, sample_diagnostics_path = _artifact_summary_paths(
+        config,
+        capture_date=capture_date,
+    )
+    sample_diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+    sample_diagnostics_path.touch()
     chainlink_raw: list[dict[str, object]] = []
     chainlink_rows: list[ChainlinkTick] = []
     exchange_raw: list[dict[str, object]] = []
     exchange_rows: list[ExchangeQuote] = []
     polymarket_raw: list[dict[str, object]] = []
     polymarket_rows: list[PolymarketQuote] = []
-    sample_diagnostics_rows: list[dict[str, object]] = []
 
     duration_seconds = max(config.duration_seconds, 0.0)
     poll_interval_seconds = max(config.poll_interval_seconds, 0.0)
@@ -561,7 +671,22 @@ def run_phase1_capture(
     last_capture_monotonic: dict[str, float | None] = {
         source_name: None for source_name in CORE_CAPTURE_SOURCES
     }
+    last_healthy_timestamp_by_source: dict[str, datetime | None] = {
+        "polymarket_metadata": max(
+            (message.recv_ts for message in metadata_output_raw),
+            default=capture_started_at,
+        ),
+        "chainlink": None,
+        "exchange": None,
+        "polymarket_quotes": None,
+    }
     last_metadata_refresh_monotonic = capture_started_monotonic
+    last_checkpoint_monotonic = capture_started_monotonic
+    last_completed_sample_started_at: datetime | None = None
+    last_selected_market_id: str | None = selected_market.market_id
+    last_selected_market_slug: str | None = selected_market.market_slug
+    last_selected_window_id: str | None = selector_diagnostics.selected_window_id
+    last_completed_sample_number = 0
     sample_count = 0
     degraded_sample_count = 0
     failed_sample_count = 0
@@ -580,342 +705,509 @@ def run_phase1_capture(
     active_polymarket_window_id: str | None = None
     consecutive_unusable_polymarket_windows = 0
     termination_reason = "completed"
+    _write_partial_capture_summary(
+        path=summary_partial_path,
+        config=config,
+        capture_date=capture_date,
+        capture_started_at=capture_started_at,
+        summary_path=summary_path,
+        sample_diagnostics_path=sample_diagnostics_path,
+        selector_diagnostics=selector_diagnostics,
+        session_status="running",
+        sample_count=sample_count,
+        last_completed_sample_number=last_completed_sample_number,
+        last_completed_sample_started_at=last_completed_sample_started_at,
+        last_selected_market_id=last_selected_market_id,
+        last_selected_market_slug=last_selected_market_slug,
+        last_selected_window_id=last_selected_window_id,
+        last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+        degraded_sample_count=degraded_sample_count,
+        failed_sample_count=failed_sample_count,
+        empty_book_count=empty_book_count,
+        retry_count_by_source=retry_count_by_source,
+        retry_exhaustion_count_by_source=retry_exhaustion_count_by_source,
+        source_failure_count_by_source=source_failure_count_by_source,
+        max_consecutive_missing_by_source=max_consecutive_missing_by_source,
+        polymarket_failure_count_by_class=polymarket_failure_count_by_class,
+        polymarket_selector_refresh_count=polymarket_selector_refresh_count,
+        polymarket_selector_rebind_count=polymarket_selector_rebind_count,
+        polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+        termination_reason=None,
+    )
 
-    while True:
-        sample_started_at = datetime.now(UTC)
-        now_monotonic = time.monotonic()
-        metadata_interval_seconds = max(config.metadata_poll_interval_seconds, 0.0)
-        if (
-            metadata_interval_seconds > 0
-            and now_monotonic - last_metadata_refresh_monotonic >= metadata_interval_seconds
-        ):
-            try:
-                refreshed_metadata_raw, refreshed_metadata_rows, _, _ = (
-                    _collect_polymarket_metadata(
-                        config,
-                        logger=logger,
-                    )
-                )
-            except Exception as exc:
-                logger.warning("scheduled metadata refresh failed: %s", exc)
-            else:
-                metadata_output_raw.extend(refreshed_metadata_raw)
-                metadata_output_rows.extend(refreshed_metadata_rows)
-                active_metadata_rows = list(refreshed_metadata_rows)
-                _, active_admitted_window_ids, _ = _admitted_family_candidates(
-                    active_metadata_rows
-                )
-                last_metadata_refresh_monotonic = now_monotonic
-                logger.info(
-                    "scheduled metadata refresh admitted %s target-family rows",
-                    len(active_metadata_rows),
-                )
-
-        sample_market: MarketMetadataCandidate | None = None
-        selected_window_id: str | None = None
-        family_validation_status = "selected"
-        source_results: dict[str, SourceCaptureResult] = {}
-
-        try:
-            sample_market = _select_market_for_current_time(
-                active_metadata_rows,
-                current_ts=sample_started_at,
-            )
-            selected_window_id = active_admitted_window_ids[sample_market.market_id]
-            consecutive_missing_by_source["selection"] = 0
-        except Exception as exc:
-            family_validation_status = "selection_failed"
-            consecutive_missing_by_source["selection"] += 1
-            max_consecutive_missing_by_source["selection"] = max(
-                max_consecutive_missing_by_source["selection"],
-                consecutive_missing_by_source["selection"],
-            )
-            logger.warning("sample %s could not select an admitted market: %s", sample_count, exc)
+    try:
+        while True:
+            sample_started_at = datetime.now(UTC)
+            now_monotonic = time.monotonic()
+            metadata_interval_seconds = max(config.metadata_poll_interval_seconds, 0.0)
             if (
-                consecutive_missing_by_source["selection"]
-                >= config.max_consecutive_selection_failures
+                metadata_interval_seconds > 0
+                and now_monotonic - last_metadata_refresh_monotonic >= metadata_interval_seconds
             ):
-                termination_reason = "selection_failure_threshold_exceeded"
+                try:
+                    refreshed_metadata_raw, refreshed_metadata_rows, _, _ = (
+                        _collect_polymarket_metadata(
+                            config,
+                            logger=logger,
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning("scheduled metadata refresh failed: %s", exc)
+                else:
+                    metadata_output_raw.extend(refreshed_metadata_raw)
+                    metadata_output_rows.extend(refreshed_metadata_rows)
+                    active_metadata_rows = list(refreshed_metadata_rows)
+                    _, active_admitted_window_ids, _ = _admitted_family_candidates(
+                        active_metadata_rows
+                    )
+                    last_metadata_refresh_monotonic = now_monotonic
+                    last_healthy_timestamp_by_source["polymarket_metadata"] = max(
+                        (
+                            message.recv_ts
+                            for message in refreshed_metadata_raw
+                        ),
+                        default=sample_started_at,
+                    )
+                    logger.info(
+                        "scheduled metadata refresh admitted %s target-family rows",
+                        len(active_metadata_rows),
+                    )
+
+            sample_market: MarketMetadataCandidate | None = None
+            selected_window_id: str | None = None
+            family_validation_status = "selected"
+            source_results: dict[str, SourceCaptureResult] = {}
+
+            try:
+                sample_market = _select_market_for_current_time(
+                    active_metadata_rows,
+                    current_ts=sample_started_at,
+                )
+                selected_window_id = active_admitted_window_ids[sample_market.market_id]
+                consecutive_missing_by_source["selection"] = 0
+            except Exception as exc:
+                family_validation_status = "selection_failed"
+                consecutive_missing_by_source["selection"] += 1
+                max_consecutive_missing_by_source["selection"] = max(
+                    max_consecutive_missing_by_source["selection"],
+                    consecutive_missing_by_source["selection"],
+                )
+                logger.warning(
+                    "sample %s could not select an admitted market: %s", sample_count, exc
+                )
+                if (
+                    consecutive_missing_by_source["selection"]
+                    >= config.max_consecutive_selection_failures
+                ):
+                    termination_reason = "selection_failure_threshold_exceeded"
+                sample_result = SampleDiagnostics(
+                    sample_index=sample_count,
+                    sample_started_at=sample_started_at,
+                    sample_status="failed",
+                    selected_market_id=None,
+                    selected_market_slug=None,
+                    selected_window_id=None,
+                    family_validation_status=family_validation_status,
+                    degraded_sources=(),
+                    source_results={},
+                    termination_reason=(
+                        termination_reason if termination_reason != "completed" else None
+                    ),
+                )
+                failed_sample_count += 1
+                append_jsonl_row(sample_diagnostics_path, sample_result.to_summary_dict())
+                if (
+                    termination_reason != "completed"
+                    or now_monotonic - last_checkpoint_monotonic
+                    >= max(config.checkpoint_interval_seconds, 0.0)
+                ):
+                    _write_partial_capture_summary(
+                        path=summary_partial_path,
+                        config=config,
+                        capture_date=capture_date,
+                        capture_started_at=capture_started_at,
+                        summary_path=summary_path,
+                        sample_diagnostics_path=sample_diagnostics_path,
+                        selector_diagnostics=selector_diagnostics,
+                        session_status="running",
+                        sample_count=sample_count,
+                        last_completed_sample_number=last_completed_sample_number,
+                        last_completed_sample_started_at=last_completed_sample_started_at,
+                        last_selected_market_id=last_selected_market_id,
+                        last_selected_market_slug=last_selected_market_slug,
+                        last_selected_window_id=last_selected_window_id,
+                        last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+                        degraded_sample_count=degraded_sample_count,
+                        failed_sample_count=failed_sample_count,
+                        empty_book_count=empty_book_count,
+                        retry_count_by_source=retry_count_by_source,
+                        retry_exhaustion_count_by_source=retry_exhaustion_count_by_source,
+                        source_failure_count_by_source=source_failure_count_by_source,
+                        max_consecutive_missing_by_source=max_consecutive_missing_by_source,
+                        polymarket_failure_count_by_class=polymarket_failure_count_by_class,
+                        polymarket_selector_refresh_count=polymarket_selector_refresh_count,
+                        polymarket_selector_rebind_count=polymarket_selector_rebind_count,
+                        polymarket_rollover_grace_sample_count=(
+                            polymarket_rollover_grace_sample_count
+                        ),
+                        termination_reason=(
+                            termination_reason if termination_reason != "completed" else None
+                        ),
+                    )
+                    last_checkpoint_monotonic = now_monotonic
+                if termination_reason != "completed":
+                    break
+                if deadline is None:
+                    break
+                sleep_seconds = _next_capture_sleep_seconds(
+                    config,
+                    now_monotonic=now_monotonic,
+                    current_ts=sample_started_at,
+                    selected_market=None,
+                    last_capture_monotonic=last_capture_monotonic,
+                    deadline=deadline,
+                )
+                if sleep_seconds is None or sleep_seconds <= 0:
+                    break
+                logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
+                time.sleep(sleep_seconds)
+                continue
+
+            due_by_source = {
+                source_name: _source_capture_due(
+                    config,
+                    source_name=source_name,
+                    current_ts=sample_started_at,
+                    selected_market=sample_market,
+                    last_capture_monotonic=last_capture_monotonic[source_name],
+                    now_monotonic=now_monotonic,
+                )
+                for source_name in CORE_CAPTURE_SOURCES
+            }
+            if not any(due_by_source.values()):
+                if deadline is None:
+                    break
+                sleep_seconds = _next_capture_sleep_seconds(
+                    config,
+                    now_monotonic=now_monotonic,
+                    current_ts=sample_started_at,
+                    selected_market=sample_market,
+                    last_capture_monotonic=last_capture_monotonic,
+                    deadline=deadline,
+                )
+                if sleep_seconds is None or sleep_seconds <= 0:
+                    break
+                logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
+                time.sleep(sleep_seconds)
+                continue
+
+            sample_count += 1
+            logger.info("starting capture sample %s", sample_count)
+            if sample_market.market_id != selected_market.market_id:
+                logger.info(
+                    "rolling Polymarket sample market to %s slug=%s window_id=%s",
+                    sample_market.market_id,
+                    sample_market.market_slug or "unknown",
+                    selected_window_id,
+                )
+
+            chainlink_result = _collect_due_chainlink_ticks(
+                config,
+                logger=logger,
+                due=due_by_source["chainlink"],
+                current_ts=sample_started_at,
+                selected_market=sample_market,
+            )
+            exchange_result = _collect_due_exchange_quotes(
+                config,
+                logger=logger,
+                due=due_by_source["exchange"],
+                current_ts=sample_started_at,
+                selected_market=sample_market,
+            )
+            polymarket_resolution = _resolve_due_polymarket_quote_capture(
+                config,
+                metadata_rows=active_metadata_rows,
+                admitted_window_ids=active_admitted_window_ids,
+                selected_market=sample_market,
+                selected_window_id=selected_window_id,
+                current_ts=sample_started_at,
+                prior_consecutive_missing=consecutive_missing_by_source["polymarket_quotes"],
+                logger=logger,
+                due=due_by_source["polymarket_quotes"],
+            )
+            if polymarket_resolution.metadata_raw_rows:
+                metadata_output_raw.extend(polymarket_resolution.metadata_raw_rows)
+            if polymarket_resolution.metadata_rows:
+                metadata_output_rows.extend(polymarket_resolution.metadata_rows)
+                active_metadata_rows = list(polymarket_resolution.metadata_rows)
+                active_admitted_window_ids = dict(polymarket_resolution.admitted_window_ids)
+                last_healthy_timestamp_by_source["polymarket_metadata"] = max(
+                    (row.recv_ts for row in polymarket_resolution.metadata_raw_rows),
+                    default=sample_started_at,
+                )
+            if polymarket_resolution.refresh_attempted:
+                polymarket_selector_refresh_count += 1
+            if polymarket_resolution.refresh_changed_binding:
+                polymarket_selector_rebind_count += 1
+                sample_market = polymarket_resolution.selected_market
+                selected_window_id = polymarket_resolution.selected_window_id
+                logger.info(
+                    "refreshed Polymarket binding to %s slug=%s window_id=%s",
+                    sample_market.market_id,
+                    sample_market.market_slug or "unknown",
+                    selected_window_id,
+                )
+            polymarket_result = polymarket_resolution.result
+            if polymarket_result.details.get("within_rollover_grace_window"):
+                polymarket_rollover_grace_sample_count += 1
+            if selected_window_id is not None:
+                window_coverage = polymarket_window_coverage_by_window_id.setdefault(
+                    selected_window_id,
+                    _new_polymarket_window_coverage(selected_window_id),
+                )
+                _update_polymarket_window_coverage(
+                    window_coverage,
+                    selected_market_id=sample_market.market_id,
+                    selected_market_slug=sample_market.market_slug,
+                    result=polymarket_result,
+                )
+                if active_polymarket_window_id is None:
+                    active_polymarket_window_id = selected_window_id
+                elif active_polymarket_window_id != selected_window_id:
+                    finalized_window = _finalize_polymarket_window_coverage(
+                        polymarket_window_coverage_by_window_id[active_polymarket_window_id],
+                        unusable_min_quote_coverage_ratio=(
+                            config.polymarket_unusable_window_min_quote_coverage_ratio
+                        ),
+                    )
+                    finalized_polymarket_window_coverage.append(finalized_window)
+                    if finalized_window["window_verdict"] == "unusable":
+                        consecutive_unusable_polymarket_windows += 1
+                    else:
+                        consecutive_unusable_polymarket_windows = 0
+                    active_polymarket_window_id = selected_window_id
+            source_results = {
+                chainlink_result.source_name: chainlink_result,
+                exchange_result.source_name: exchange_result,
+                polymarket_result.source_name: polymarket_result,
+            }
+
+            for source_name, result in source_results.items():
+                retry_count_by_source[source_name] += result.retries
+                if result.status not in {"success", "not_due"}:
+                    source_failure_count_by_source[source_name] += 1
+                    if source_name == "polymarket_quotes" and result.failure_class is not None:
+                        polymarket_failure_count_by_class[result.failure_class] += 1
+                    if result.status == "retry_exhausted":
+                        retry_exhaustion_count_by_source[source_name] += 1
+                if result.status == "not_due":
+                    continue
+                missing_output = len(result.normalized_rows) == 0
+                if (
+                    source_name == "polymarket_quotes"
+                    and _polymarket_failure_semantics(result)
+                    == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
+                ):
+                    missing_output = False
+                if missing_output:
+                    consecutive_missing_by_source[source_name] += 1
+                else:
+                    consecutive_missing_by_source[source_name] = 0
+                max_consecutive_missing_by_source[source_name] = max(
+                    max_consecutive_missing_by_source[source_name],
+                    consecutive_missing_by_source[source_name],
+                )
+                last_capture_monotonic[source_name] = now_monotonic
+                if result.status == "success":
+                    last_healthy_timestamp_by_source[source_name] = sample_started_at
+
+            if (
+                _polymarket_failure_semantics(polymarket_result)
+                == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
+            ):
+                empty_book_count += 1
+
+            chainlink_raw.extend(chainlink_result.raw_rows)
+            chainlink_rows.extend(chainlink_result.normalized_rows)
+            exchange_raw.extend(exchange_result.raw_rows)
+            exchange_rows.extend(exchange_result.normalized_rows)
+            polymarket_raw.extend(polymarket_result.raw_rows)
+            polymarket_rows.extend(polymarket_result.normalized_rows)
+
+            degraded_sources = tuple(
+                source_name
+                for source_name, result in source_results.items()
+                if result.status not in {"success", "not_due"}
+            )
+            terminal_source_failure = any(
+                result.failure_class
+                in {POLYMARKET_FAILURE_CLASS_BINDING_INVALID, "terminal_schema_failure"}
+                for result in source_results.values()
+            )
+            if degraded_sources:
+                if terminal_source_failure or all(
+                    result.status != "not_due" and len(result.normalized_rows) == 0
+                    for result in source_results.values()
+                ):
+                    sample_status = "failed"
+                    failed_sample_count += 1
+                else:
+                    sample_status = "degraded"
+                    degraded_sample_count += 1
+                logger.warning(
+                    "sample %s completed with degraded sources: %s",
+                    sample_count,
+                    ", ".join(degraded_sources),
+                )
+            else:
+                sample_status = "healthy"
+
+            if (
+                consecutive_missing_by_source["chainlink"]
+                >= config.max_consecutive_chainlink_failures
+            ):
+                termination_reason = "chainlink_failure_threshold_exceeded"
+            elif (
+                consecutive_missing_by_source["exchange"]
+                >= config.max_consecutive_exchange_failures
+            ):
+                termination_reason = "exchange_failure_threshold_exceeded"
+            elif (
+                _polymarket_failure_semantics(polymarket_result)
+                == POLYMARKET_FAILURE_CLASS_BINDING_INVALID
+            ):
+                termination_reason = "polymarket_market_invalid"
+            elif polymarket_result.failure_class == "terminal_schema_failure":
+                termination_reason = "polymarket_schema_failure"
+            elif (
+                consecutive_missing_by_source["polymarket_quotes"]
+                >= _polymarket_failure_threshold(
+                    config,
+                    within_rollover_grace_window=bool(
+                        polymarket_result.details.get("within_rollover_grace_window")
+                    ),
+                )
+            ):
+                termination_reason = "polymarket_failure_threshold_exceeded"
+            elif (
+                consecutive_unusable_polymarket_windows
+                >= config.max_consecutive_unusable_polymarket_windows
+            ):
+                termination_reason = "polymarket_window_coverage_threshold_exceeded"
+
             sample_result = SampleDiagnostics(
                 sample_index=sample_count,
                 sample_started_at=sample_started_at,
-                sample_status="failed",
-                selected_market_id=None,
-                selected_market_slug=None,
-                selected_window_id=None,
+                sample_status=sample_status,
+                selected_market_id=sample_market.market_id,
+                selected_market_slug=sample_market.market_slug,
+                selected_window_id=selected_window_id,
                 family_validation_status=family_validation_status,
-                degraded_sources=(),
-                source_results={},
+                degraded_sources=degraded_sources,
+                source_results=source_results,
                 termination_reason=(
                     termination_reason if termination_reason != "completed" else None
                 ),
             )
-            failed_sample_count += 1
-            sample_diagnostics_rows.append(sample_result.to_summary_dict())
-            if termination_reason != "completed":
-                break
-            if deadline is None:
-                break
-            sleep_seconds = _next_capture_sleep_seconds(
-                config,
-                now_monotonic=now_monotonic,
-                current_ts=sample_started_at,
-                selected_market=None,
-                last_capture_monotonic=last_capture_monotonic,
-                deadline=deadline,
-            )
-            if sleep_seconds is None or sleep_seconds <= 0:
-                break
-            logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
-            time.sleep(sleep_seconds)
-            continue
+            append_jsonl_row(sample_diagnostics_path, sample_result.to_summary_dict())
+            last_completed_sample_number = sample_count
+            last_completed_sample_started_at = sample_started_at
+            last_selected_market_id = sample_market.market_id
+            last_selected_market_slug = sample_market.market_slug
+            last_selected_window_id = selected_window_id
 
-        due_by_source = {
-            source_name: _source_capture_due(
-                config,
-                source_name=source_name,
-                current_ts=sample_started_at,
-                selected_market=sample_market,
-                last_capture_monotonic=last_capture_monotonic[source_name],
-                now_monotonic=now_monotonic,
-            )
-            for source_name in CORE_CAPTURE_SOURCES
-        }
-        if not any(due_by_source.values()):
-            if deadline is None:
-                break
-            sleep_seconds = _next_capture_sleep_seconds(
-                config,
-                now_monotonic=now_monotonic,
-                current_ts=sample_started_at,
-                selected_market=sample_market,
-                last_capture_monotonic=last_capture_monotonic,
-                deadline=deadline,
-            )
-            if sleep_seconds is None or sleep_seconds <= 0:
-                break
-            logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
-            time.sleep(sleep_seconds)
-            continue
-
-        sample_count += 1
-        logger.info("starting capture sample %s", sample_count)
-        if sample_market.market_id != selected_market.market_id:
-            logger.info(
-                "rolling Polymarket sample market to %s slug=%s window_id=%s",
-                sample_market.market_id,
-                sample_market.market_slug or "unknown",
-                selected_window_id,
-            )
-
-        chainlink_result = _collect_due_chainlink_ticks(
-            config,
-            logger=logger,
-            due=due_by_source["chainlink"],
-            current_ts=sample_started_at,
-            selected_market=sample_market,
-        )
-        exchange_result = _collect_due_exchange_quotes(
-            config,
-            logger=logger,
-            due=due_by_source["exchange"],
-            current_ts=sample_started_at,
-            selected_market=sample_market,
-        )
-        polymarket_resolution = _resolve_due_polymarket_quote_capture(
-            config,
-            metadata_rows=active_metadata_rows,
-            admitted_window_ids=active_admitted_window_ids,
-            selected_market=sample_market,
-            selected_window_id=selected_window_id,
-            current_ts=sample_started_at,
-            prior_consecutive_missing=consecutive_missing_by_source["polymarket_quotes"],
-            logger=logger,
-            due=due_by_source["polymarket_quotes"],
-        )
-        if polymarket_resolution.metadata_raw_rows:
-            metadata_output_raw.extend(polymarket_resolution.metadata_raw_rows)
-        if polymarket_resolution.metadata_rows:
-            metadata_output_rows.extend(polymarket_resolution.metadata_rows)
-            active_metadata_rows = list(polymarket_resolution.metadata_rows)
-            active_admitted_window_ids = dict(polymarket_resolution.admitted_window_ids)
-        if polymarket_resolution.refresh_attempted:
-            polymarket_selector_refresh_count += 1
-        if polymarket_resolution.refresh_changed_binding:
-            polymarket_selector_rebind_count += 1
-            sample_market = polymarket_resolution.selected_market
-            selected_window_id = polymarket_resolution.selected_window_id
-            logger.info(
-                "refreshed Polymarket binding to %s slug=%s window_id=%s",
-                sample_market.market_id,
-                sample_market.market_slug or "unknown",
-                selected_window_id,
-            )
-        polymarket_result = polymarket_resolution.result
-        if polymarket_result.details.get("within_rollover_grace_window"):
-            polymarket_rollover_grace_sample_count += 1
-        if selected_window_id is not None:
-            window_coverage = polymarket_window_coverage_by_window_id.setdefault(
-                selected_window_id,
-                _new_polymarket_window_coverage(selected_window_id),
-            )
-            _update_polymarket_window_coverage(
-                window_coverage,
-                selected_market_id=sample_market.market_id,
-                selected_market_slug=sample_market.market_slug,
-                result=polymarket_result,
-            )
-            if active_polymarket_window_id is None:
-                active_polymarket_window_id = selected_window_id
-            elif active_polymarket_window_id != selected_window_id:
-                finalized_window = _finalize_polymarket_window_coverage(
-                    polymarket_window_coverage_by_window_id[active_polymarket_window_id],
-                    unusable_min_quote_coverage_ratio=(
-                        config.polymarket_unusable_window_min_quote_coverage_ratio
+            if (
+                termination_reason != "completed"
+                or now_monotonic - last_checkpoint_monotonic
+                >= max(config.checkpoint_interval_seconds, 0.0)
+            ):
+                _write_partial_capture_summary(
+                    path=summary_partial_path,
+                    config=config,
+                    capture_date=capture_date,
+                    capture_started_at=capture_started_at,
+                    summary_path=summary_path,
+                    sample_diagnostics_path=sample_diagnostics_path,
+                    selector_diagnostics=selector_diagnostics,
+                    session_status="running",
+                    sample_count=sample_count,
+                    last_completed_sample_number=last_completed_sample_number,
+                    last_completed_sample_started_at=last_completed_sample_started_at,
+                    last_selected_market_id=last_selected_market_id,
+                    last_selected_market_slug=last_selected_market_slug,
+                    last_selected_window_id=last_selected_window_id,
+                    last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+                    degraded_sample_count=degraded_sample_count,
+                    failed_sample_count=failed_sample_count,
+                    empty_book_count=empty_book_count,
+                    retry_count_by_source=retry_count_by_source,
+                    retry_exhaustion_count_by_source=retry_exhaustion_count_by_source,
+                    source_failure_count_by_source=source_failure_count_by_source,
+                    max_consecutive_missing_by_source=max_consecutive_missing_by_source,
+                    polymarket_failure_count_by_class=polymarket_failure_count_by_class,
+                    polymarket_selector_refresh_count=polymarket_selector_refresh_count,
+                    polymarket_selector_rebind_count=polymarket_selector_rebind_count,
+                    polymarket_rollover_grace_sample_count=(
+                        polymarket_rollover_grace_sample_count
+                    ),
+                    termination_reason=(
+                        termination_reason if termination_reason != "completed" else None
                     ),
                 )
-                finalized_polymarket_window_coverage.append(finalized_window)
-                if finalized_window["window_verdict"] == "unusable":
-                    consecutive_unusable_polymarket_windows += 1
-                else:
-                    consecutive_unusable_polymarket_windows = 0
-                active_polymarket_window_id = selected_window_id
-        source_results = {
-            chainlink_result.source_name: chainlink_result,
-            exchange_result.source_name: exchange_result,
-            polymarket_result.source_name: polymarket_result,
-        }
+                last_checkpoint_monotonic = now_monotonic
 
-        for source_name, result in source_results.items():
-            retry_count_by_source[source_name] += result.retries
-            if result.status not in {"success", "not_due"}:
-                source_failure_count_by_source[source_name] += 1
-                if source_name == "polymarket_quotes" and result.failure_class is not None:
-                    polymarket_failure_count_by_class[result.failure_class] += 1
-                if result.status == "retry_exhausted":
-                    retry_exhaustion_count_by_source[source_name] += 1
-            if result.status == "not_due":
-                continue
-            missing_output = len(result.normalized_rows) == 0
-            if (
-                source_name == "polymarket_quotes"
-                and _polymarket_failure_semantics(result)
-                == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
-            ):
-                missing_output = False
-            if missing_output:
-                consecutive_missing_by_source[source_name] += 1
-            else:
-                consecutive_missing_by_source[source_name] = 0
-            max_consecutive_missing_by_source[source_name] = max(
-                max_consecutive_missing_by_source[source_name],
-                consecutive_missing_by_source[source_name],
-            )
-            last_capture_monotonic[source_name] = now_monotonic
+            if termination_reason != "completed":
+                logger.error("terminating capture early: %s", termination_reason)
+                break
 
-        if (
-            _polymarket_failure_semantics(polymarket_result)
-            == POLYMARKET_FAILURE_CLASS_VALID_EMPTY_BOOK
-        ):
-            empty_book_count += 1
-
-        chainlink_raw.extend(chainlink_result.raw_rows)
-        chainlink_rows.extend(chainlink_result.normalized_rows)
-        exchange_raw.extend(exchange_result.raw_rows)
-        exchange_rows.extend(exchange_result.normalized_rows)
-        polymarket_raw.extend(polymarket_result.raw_rows)
-        polymarket_rows.extend(polymarket_result.normalized_rows)
-
-        degraded_sources = tuple(
-            source_name
-            for source_name, result in source_results.items()
-            if result.status not in {"success", "not_due"}
-        )
-        terminal_source_failure = any(
-            result.failure_class
-            in {POLYMARKET_FAILURE_CLASS_BINDING_INVALID, "terminal_schema_failure"}
-            for result in source_results.values()
-        )
-        if degraded_sources:
-            if terminal_source_failure or all(
-                result.status != "not_due" and len(result.normalized_rows) == 0
-                for result in source_results.values()
-            ):
-                sample_status = "failed"
-                failed_sample_count += 1
-            else:
-                sample_status = "degraded"
-                degraded_sample_count += 1
-            logger.warning(
-                "sample %s completed with degraded sources: %s",
-                sample_count,
-                ", ".join(degraded_sources),
-            )
-        else:
-            sample_status = "healthy"
-
-        if consecutive_missing_by_source["chainlink"] >= config.max_consecutive_chainlink_failures:
-            termination_reason = "chainlink_failure_threshold_exceeded"
-        elif (
-            consecutive_missing_by_source["exchange"]
-            >= config.max_consecutive_exchange_failures
-        ):
-            termination_reason = "exchange_failure_threshold_exceeded"
-        elif (
-            _polymarket_failure_semantics(polymarket_result)
-            == POLYMARKET_FAILURE_CLASS_BINDING_INVALID
-        ):
-            termination_reason = "polymarket_market_invalid"
-        elif polymarket_result.failure_class == "terminal_schema_failure":
-            termination_reason = "polymarket_schema_failure"
-        elif (
-            consecutive_missing_by_source["polymarket_quotes"]
-            >= _polymarket_failure_threshold(
+            if deadline is None:
+                break
+            sleep_seconds = _next_capture_sleep_seconds(
                 config,
-                within_rollover_grace_window=bool(
-                    polymarket_result.details.get("within_rollover_grace_window")
-                ),
+                now_monotonic=now_monotonic,
+                current_ts=sample_started_at,
+                selected_market=sample_market,
+                last_capture_monotonic=last_capture_monotonic,
+                deadline=deadline,
             )
-        ):
-            termination_reason = "polymarket_failure_threshold_exceeded"
-        elif (
-            consecutive_unusable_polymarket_windows
-            >= config.max_consecutive_unusable_polymarket_windows
-        ):
-            termination_reason = "polymarket_window_coverage_threshold_exceeded"
-
-        sample_result = SampleDiagnostics(
-            sample_index=sample_count,
-            sample_started_at=sample_started_at,
-            sample_status=sample_status,
-            selected_market_id=sample_market.market_id,
-            selected_market_slug=sample_market.market_slug,
-            selected_window_id=selected_window_id,
-            family_validation_status=family_validation_status,
-            degraded_sources=degraded_sources,
-            source_results=source_results,
-            termination_reason=(termination_reason if termination_reason != "completed" else None),
+            if sleep_seconds is None or sleep_seconds <= 0:
+                break
+            logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
+            time.sleep(sleep_seconds)
+    except Exception as exc:
+        _write_partial_capture_summary(
+            path=summary_partial_path,
+            config=config,
+            capture_date=capture_date,
+            capture_started_at=capture_started_at,
+            summary_path=summary_path,
+            sample_diagnostics_path=sample_diagnostics_path,
+            selector_diagnostics=selector_diagnostics,
+            session_status="crashed",
+            sample_count=sample_count,
+            last_completed_sample_number=last_completed_sample_number,
+            last_completed_sample_started_at=last_completed_sample_started_at,
+            last_selected_market_id=last_selected_market_id,
+            last_selected_market_slug=last_selected_market_slug,
+            last_selected_window_id=last_selected_window_id,
+            last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+            degraded_sample_count=degraded_sample_count,
+            failed_sample_count=failed_sample_count,
+            empty_book_count=empty_book_count,
+            retry_count_by_source=retry_count_by_source,
+            retry_exhaustion_count_by_source=retry_exhaustion_count_by_source,
+            source_failure_count_by_source=source_failure_count_by_source,
+            max_consecutive_missing_by_source=max_consecutive_missing_by_source,
+            polymarket_failure_count_by_class=polymarket_failure_count_by_class,
+            polymarket_selector_refresh_count=polymarket_selector_refresh_count,
+            polymarket_selector_rebind_count=polymarket_selector_rebind_count,
+            polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+            termination_reason="uncaught_exception",
+            failure_type=type(exc).__name__,
+            failure_message=str(exc),
         )
-        sample_diagnostics_rows.append(sample_result.to_summary_dict())
-
-        if termination_reason != "completed":
-            logger.error("terminating capture early: %s", termination_reason)
-            break
-
-        if deadline is None:
-            break
-        sleep_seconds = _next_capture_sleep_seconds(
-            config,
-            now_monotonic=now_monotonic,
-            current_ts=sample_started_at,
-            selected_market=sample_market,
-            last_capture_monotonic=last_capture_monotonic,
-            deadline=deadline,
-        )
-        if sleep_seconds is None or sleep_seconds <= 0:
-            break
-        logger.info("sleeping %.3f seconds before next capture sample", sleep_seconds)
-        time.sleep(sleep_seconds)
+        raise
 
     if active_polymarket_window_id is not None:
         finalized_polymarket_window_coverage.append(
@@ -966,15 +1258,6 @@ def run_phase1_capture(
         ),
     )
 
-    summary_path = (
-        config.artifacts_root
-        / "collect"
-        / f"date={capture_date.isoformat()}"
-        / f"session={config.session_id}"
-        / "summary.json"
-    )
-    sample_diagnostics_path = summary_path.with_name("sample_diagnostics.jsonl")
-    write_jsonl_rows(sample_diagnostics_path, sample_diagnostics_rows)
     session_diagnostics = SessionDiagnostics(
         degraded_sample_count=degraded_sample_count,
         failed_sample_count=failed_sample_count,
@@ -1001,6 +1284,7 @@ def run_phase1_capture(
         ),
         termination_reason=termination_reason,
         sample_diagnostics_path=sample_diagnostics_path,
+        summary_partial_path=summary_partial_path,
     )
     result = Phase1CaptureResult(
         session_id=config.session_id,
@@ -1018,6 +1302,35 @@ def run_phase1_capture(
         collectors=collectors,
     )
     write_json_file(summary_path, result.to_summary_dict())
+    _write_partial_capture_summary(
+        path=summary_partial_path,
+        config=config,
+        capture_date=capture_date,
+        capture_started_at=capture_started_at,
+        summary_path=summary_path,
+        sample_diagnostics_path=sample_diagnostics_path,
+        selector_diagnostics=selector_diagnostics,
+        session_status="completed",
+        sample_count=sample_count,
+        last_completed_sample_number=last_completed_sample_number,
+        last_completed_sample_started_at=last_completed_sample_started_at,
+        last_selected_market_id=last_selected_market_id,
+        last_selected_market_slug=last_selected_market_slug,
+        last_selected_window_id=last_selected_window_id,
+        last_healthy_timestamp_by_source=last_healthy_timestamp_by_source,
+        degraded_sample_count=degraded_sample_count,
+        failed_sample_count=failed_sample_count,
+        empty_book_count=empty_book_count,
+        retry_count_by_source=retry_count_by_source,
+        retry_exhaustion_count_by_source=retry_exhaustion_count_by_source,
+        source_failure_count_by_source=source_failure_count_by_source,
+        max_consecutive_missing_by_source=max_consecutive_missing_by_source,
+        polymarket_failure_count_by_class=polymarket_failure_count_by_class,
+        polymarket_selector_refresh_count=polymarket_selector_refresh_count,
+        polymarket_selector_rebind_count=polymarket_selector_rebind_count,
+        polymarket_rollover_grace_sample_count=polymarket_rollover_grace_sample_count,
+        termination_reason=termination_reason,
+    )
 
     for collector in collectors:
         logger.info(

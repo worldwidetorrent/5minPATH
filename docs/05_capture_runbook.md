@@ -113,8 +113,16 @@ Optional resilience tuning:
 
 - Log file: `logs/collect_<session>.log`
 - Summary artifact: `artifacts/collect/date=YYYY-MM-DD/session=<session>/summary.json`
+- Partial summary artifact: `artifacts/collect/date=YYYY-MM-DD/session=<session>/summary.partial.json`
 - Admission artifact: `artifacts/collect/date=YYYY-MM-DD/session=<session>/admission_summary.json`
 - Per-sample diagnostics: `artifacts/collect/date=YYYY-MM-DD/session=<session>/sample_diagnostics.jsonl`
+
+Crash-safe session checkpointing:
+
+- the collector appends `sample_diagnostics.jsonl` as each sample completes; it is no longer an end-of-run-only dump
+- the collector rewrites `summary.partial.json` on a fixed checkpoint cadence; default is every `60` seconds
+- `summary.partial.json` includes the last completed sample number, last healthy timestamp per source, current selected `market_id` / slug / `window_id`, and rolling failure counters
+- if a long run dies before finalization, `summary.partial.json` plus `sample_diagnostics.jsonl` are the source of truth for the partial session record
 
 ## Output layout
 
@@ -172,6 +180,7 @@ Check the latest summary:
 
 ```bash
 find artifacts/collect -name summary.json | sort | tail -n 1 | xargs cat
+find artifacts/collect -name summary.partial.json | sort | tail -n 1 | xargs cat
 find artifacts/collect -name admission_summary.json | sort | tail -n 1 | xargs cat
 ```
 
@@ -193,6 +202,7 @@ For a hardened pilot, also confirm:
 
 - `session_diagnostics.termination_reason` is `completed`
 - `sample_diagnostics.jsonl` contains `healthy` or `degraded` samples with per-source status detail
+- `summary.partial.json` advances during the run and exposes `last_completed_sample_number`, `last_healthy_timestamp_by_source`, `selected_market_id`, `selected_market_slug`, and `selected_window_id`
 - `admission_summary.json` reports family-compliance counts and off-family switch count from the final selected market/window binding per sample, while metadata-strip breadth and ambiguity are reported separately from family drift; it also includes degraded samples inside/outside rollover grace, Chainlink continuity, exchange venue continuity, mapped window count, open-anchor confidence breakdown, and `snapshot_eligible_sample_count`
 - `admission_summary.json` now reports `chainlink_continuity.oracle_source_count` so the pilot can be judged on the actual oracle source used, not a generic Chainlink label
 - unit regression coverage now pins the public-stream boundary-validation baseline, including the cross-midnight admission rollup, zero off-family drift, explicit `chainlink_stream_public_delayed` lineage, nonzero anchor confidence, and nonzero snapshot eligibility

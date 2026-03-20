@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from rtds.collectors.phase1_capture import (
     DEFAULT_BOUNDARY_BURST_INTERVAL_SECONDS,
     FetchResult,
@@ -651,6 +653,227 @@ def test_run_phase1_capture_does_not_hard_stop_on_valid_empty_book_streak(
     assert result.session_diagnostics.max_consecutive_missing_by_source["polymarket_quotes"] == 0
     assert result.session_diagnostics.polymarket_window_coverage[0]["valid_empty_book_samples"] == 3
     assert result.session_diagnostics.polymarket_window_coverage[0]["window_verdict"] == "unusable"
+
+
+def test_run_phase1_capture_writes_incremental_partial_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    active_candidate = _metadata_candidate()
+    metadata_raw = _metadata_raw(active_candidate.market_id)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=active_candidate.market_id,
+        selected_market_slug=active_candidate.market_slug,
+        selected_window_id="btc-5m-20260313T120500Z",
+        candidate_count=1,
+        admitted_count=1,
+        rejected_count_by_reason={},
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_metadata",
+        lambda config, logger: (
+            [metadata_raw],
+            [active_candidate],
+            active_candidate,
+            selector_diagnostics,
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_ticks",
+        lambda config, logger: SourceCaptureResult(
+            source_name="chainlink",
+            status="success",
+            raw_rows=({"raw_event_id": "chainlink:1"},),
+            normalized_rows=(
+                ChainlinkTick(
+                    event_id="chainlink:round:1",
+                    event_ts=datetime(2026, 3, 13, 12, 5, 1, tzinfo=UTC),
+                    price=Decimal("84000.00"),
+                    recv_ts=datetime(2026, 3, 13, 12, 5, 1, tzinfo=UTC),
+                    round_id="1",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_exchange_quotes",
+        lambda config, logger: SourceCaptureResult(
+            source_name="exchange",
+            status="success",
+            raw_rows=(
+                {"raw_event_id": "binance:1", "venue_id": "binance"},
+                {"raw_event_id": "coinbase:1", "venue_id": "coinbase"},
+                {"raw_event_id": "kraken:1", "venue_id": "kraken"},
+            ),
+            normalized_rows=(_binance_quote(1), _coinbase_quote(1), _kraken_quote(1)),
+        ),
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_quote",
+        lambda config, selected_market, selected_window_id, current_ts=None, logger=None: (
+            SourceCaptureResult(
+                source_name="polymarket_quotes",
+                status="success",
+                raw_rows=({"raw_event_id": "polymarket:1"},),
+                normalized_rows=(_polymarket_quote(1, market_id=selected_market.market_id),),
+                details={"selected_window_id": selected_window_id},
+            )
+        ),
+    )
+    monotonic_values = iter([0.0, 1.0, 61.0, 121.0, 181.0])
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    monkeypatch.setattr("rtds.collectors.phase1_capture.time.sleep", lambda seconds: None)
+
+    result = run_phase1_capture(
+        Phase1CaptureConfig(
+            data_root=tmp_path / "data",
+            artifacts_root=tmp_path / "artifacts",
+            logs_root=tmp_path / "logs",
+            temp_root=tmp_path / "tmp",
+            session_id="test-session",
+            capture_started_at=datetime(2026, 3, 13, 12, 5, 0, tzinfo=UTC),
+            duration_seconds=120.0,
+            poll_interval_seconds=60.0,
+            checkpoint_interval_seconds=60.0,
+        ),
+        logger=_logger(),
+    )
+
+    partial_summary_path = result.summary_path.with_name("summary.partial.json")
+    partial_summary = json.loads(partial_summary_path.read_text(encoding="utf-8"))
+
+    assert partial_summary["session_status"] == "completed"
+    assert partial_summary["last_completed_sample_number"] == 3
+    assert partial_summary["selected_market_id"] == active_candidate.market_id
+    assert partial_summary["selected_window_id"] == "btc-5m-20260313T120500Z"
+    assert partial_summary["last_healthy_timestamp_by_source"]["chainlink"] is not None
+    assert partial_summary["last_healthy_timestamp_by_source"]["exchange"] is not None
+    assert partial_summary["last_healthy_timestamp_by_source"]["polymarket_quotes"] is not None
+    assert result.session_diagnostics.summary_partial_path == partial_summary_path
+
+
+def test_run_phase1_capture_leaves_partial_artifacts_after_crash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    active_candidate = _metadata_candidate()
+    metadata_raw = _metadata_raw(active_candidate.market_id)
+    selector_diagnostics = MetadataSelectionDiagnostics(
+        selected_market_id=active_candidate.market_id,
+        selected_market_slug=active_candidate.market_slug,
+        selected_window_id="btc-5m-20260313T120500Z",
+        candidate_count=1,
+        admitted_count=1,
+        rejected_count_by_reason={},
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_metadata",
+        lambda config, logger: (
+            [metadata_raw],
+            [active_candidate],
+            active_candidate,
+            selector_diagnostics,
+        ),
+    )
+
+    sample_index = {"value": 0}
+
+    def collect_chainlink(config, logger):
+        sample_index["value"] += 1
+        index = sample_index["value"]
+        recv_ts = datetime(2026, 3, 13, 12, 5, index, tzinfo=UTC)
+        return SourceCaptureResult(
+            source_name="chainlink",
+            status="success",
+            raw_rows=({"raw_event_id": f"chainlink:{index}"},),
+            normalized_rows=(
+                ChainlinkTick(
+                    event_id=f"chainlink:{index}",
+                    event_ts=recv_ts,
+                    price=Decimal("84000.00"),
+                    recv_ts=recv_ts,
+                    round_id=str(index),
+                ),
+            ),
+        )
+
+    def collect_exchange(config, logger):
+        if sample_index["value"] == 3:
+            raise RuntimeError("exchange collector crashed")
+        return SourceCaptureResult(
+            source_name="exchange",
+            status="success",
+            raw_rows=(
+                {"raw_event_id": "binance:1", "venue_id": "binance"},
+                {"raw_event_id": "coinbase:1", "venue_id": "coinbase"},
+                {"raw_event_id": "kraken:1", "venue_id": "kraken"},
+            ),
+            normalized_rows=(_binance_quote(1), _coinbase_quote(1), _kraken_quote(1)),
+        )
+
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_chainlink_ticks",
+        collect_chainlink,
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_exchange_quotes",
+        collect_exchange,
+    )
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_quote",
+        lambda config, selected_market, selected_window_id, current_ts=None, logger=None: (
+            SourceCaptureResult(
+                source_name="polymarket_quotes",
+                status="success",
+                raw_rows=({"raw_event_id": "polymarket:1"},),
+                normalized_rows=(_polymarket_quote(1, market_id=selected_market.market_id),),
+                details={"selected_window_id": selected_window_id},
+            )
+        ),
+    )
+    monotonic_values = iter([0.0, 1.0, 61.0, 121.0])
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    monkeypatch.setattr("rtds.collectors.phase1_capture.time.sleep", lambda seconds: None)
+
+    with pytest.raises(RuntimeError, match="exchange collector crashed"):
+        run_phase1_capture(
+            Phase1CaptureConfig(
+                data_root=tmp_path / "data",
+                artifacts_root=tmp_path / "artifacts",
+                logs_root=tmp_path / "logs",
+                temp_root=tmp_path / "tmp",
+                session_id="test-session",
+                capture_started_at=datetime(2026, 3, 13, 12, 5, 0, tzinfo=UTC),
+                duration_seconds=180.0,
+                poll_interval_seconds=60.0,
+                checkpoint_interval_seconds=60.0,
+            ),
+            logger=_logger(),
+        )
+
+    partial_summary_path = (
+        tmp_path
+        / "artifacts"
+        / "collect"
+        / "date=2026-03-13"
+        / "session=test-session"
+        / "summary.partial.json"
+    )
+    diagnostics_path = partial_summary_path.with_name("sample_diagnostics.jsonl")
+    partial_summary = json.loads(partial_summary_path.read_text(encoding="utf-8"))
+
+    assert partial_summary["session_status"] == "crashed"
+    assert partial_summary["termination_reason"] == "uncaught_exception"
+    assert partial_summary["failure_type"] == "RuntimeError"
+    assert partial_summary["last_completed_sample_number"] == 2
+    assert partial_summary["sample_diagnostics_path"] == str(diagnostics_path)
+    assert len(diagnostics_path.read_text(encoding="utf-8").splitlines()) == 2
 
 
 def test_run_with_retries_allows_http_payload_with_empty_error_list() -> None:
