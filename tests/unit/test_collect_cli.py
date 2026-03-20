@@ -3,7 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
-from rtds.cli.collect import _resolve_capture_timing, main
+from rtds.cli.collect import CaptureSignalAbort, _resolve_capture_timing, main
 
 
 def test_collect_cli_rejects_direct_invocation(tmp_path: Path, monkeypatch) -> None:
@@ -49,6 +49,29 @@ def test_collect_cli_prepare_only_bootstraps_layout(tmp_path: Path, monkeypatch)
     assert (tmp_path / "artifacts").exists()
     assert (tmp_path / "logs").exists()
     assert (tmp_path / "tmp").exists()
+
+
+def test_collect_cli_returns_failure_on_signal_abort(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("RTDS_COLLECTION_ENTRYPOINT", "scripts/run_collectors.sh")
+    monkeypatch.setattr(
+        "rtds.cli.collect.run_phase1_capture",
+        lambda config, logger: (_ for _ in ()).throw(CaptureSignalAbort("SIGTERM")),
+    )
+
+    exit_code = main(
+        [
+            "--data-root",
+            str(tmp_path / "data"),
+            "--artifacts-root",
+            str(tmp_path / "artifacts"),
+            "--logs-root",
+            str(tmp_path / "logs"),
+            "--temp-root",
+            str(tmp_path / "tmp"),
+        ]
+    )
+
+    assert exit_code == 1
 
 
 def test_resolve_capture_timing_uses_pilot_density_defaults() -> None:

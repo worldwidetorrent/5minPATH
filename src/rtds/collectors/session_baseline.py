@@ -108,6 +108,17 @@ def load_capture_result_from_summary(summary_path: str | Path) -> Phase1CaptureR
             ),
             termination_reason=str(session_payload["termination_reason"]),
             sample_diagnostics_path=Path(str(session_payload["sample_diagnostics_path"])),
+            summary_partial_path=(
+                Path(str(session_payload["summary_partial_path"]))
+                if session_payload.get("summary_partial_path") is not None
+                else None
+            ),
+            lifecycle_state=str(
+                session_payload.get("lifecycle_state", "completed")
+            ),
+            lifecycle_history=tuple(
+                dict(item) for item in session_payload.get("lifecycle_history", [])
+            ),
             polymarket_window_coverage=tuple(
                 dict(item) for item in session_payload.get("polymarket_window_coverage", [])
             ),

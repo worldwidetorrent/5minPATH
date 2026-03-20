@@ -53,6 +53,14 @@ def test_load_capture_result_from_summary_reconstructs_core_fields(tmp_path: Pat
                 "sample_diagnostics_path": str(
                     tmp_path / "artifacts" / "collect" / "samples.jsonl"
                 ),
+                "summary_partial_path": str(
+                    tmp_path / "artifacts" / "collect" / "summary.partial.json"
+                ),
+                "lifecycle_state": "completed",
+                "lifecycle_history": [
+                    {"state": "running", "recorded_at": "2026-03-16T10:00:00Z"},
+                    {"state": "completed", "recorded_at": "2026-03-16T10:05:00Z"},
+                ],
             },
             "collectors": [
                 {
@@ -76,6 +84,10 @@ def test_load_capture_result_from_summary_reconstructs_core_fields(tmp_path: Pat
     assert result.session_diagnostics.polymarket_failure_count_by_class == {
         "valid_empty_book": 1
     }
+    assert result.session_diagnostics.lifecycle_state == "completed"
+    assert result.session_diagnostics.summary_partial_path == (
+        tmp_path / "artifacts" / "collect" / "summary.partial.json"
+    )
     assert result.collectors[0].collector_name == "chainlink"
 
 

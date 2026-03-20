@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -47,6 +48,14 @@ DATA_SUBDIRECTORIES = ("raw", "normalized", "reference")
 CAPTURE_MODE_SMOKE = "smoke"
 CAPTURE_MODE_PILOT = "pilot"
 CAPTURE_MODE_ADMISSION = "admission"
+
+
+class CaptureSignalAbort(Exception):
+    """Raised when the sanctioned collector receives a process signal."""
+
+    def __init__(self, signal_name: str) -> None:
+        super().__init__(f"capture interrupted by {signal_name}")
+        self.signal_name = signal_name
 
 
 def _capture_mode_defaults(mode: str) -> dict[str, object]:
@@ -298,6 +307,24 @@ def _build_logger(log_path: Path) -> logging.Logger:
     return logger
 
 
+def _install_signal_handlers() -> dict[int, signal.Handlers]:
+    previous_handlers: dict[int, signal.Handlers] = {}
+
+    def _handler(signum: int, _frame) -> None:
+        signal_name = signal.Signals(signum).name
+        raise CaptureSignalAbort(signal_name)
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, _handler)
+    return previous_handlers
+
+
+def _restore_signal_handlers(previous_handlers: dict[int, signal.Handlers]) -> None:
+    for signum, handler in previous_handlers.items():
+        signal.signal(signum, handler)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     prepared_paths = _prepare_layout(
@@ -369,12 +396,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         chainlink_streams_page_url=str(args.chainlink_streams_page_url),
         chainlink_streams_feed_id=str(args.chainlink_streams_feed_id),
     )
+    previous_signal_handlers = _install_signal_handlers()
     try:
         result = run_phase1_capture(config, logger=logger)
     except Exception as exc:  # pragma: no cover - exercised through integration paths
-        logger.exception("phase-1 capture failed")
+        if isinstance(exc, CaptureSignalAbort):
+            logger.error("phase-1 capture interrupted by signal: %s", exc.signal_name)
+        else:
+            logger.exception("phase-1 capture failed")
         print(f"phase-1 capture failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        _restore_signal_handlers(previous_signal_handlers)
 
     try:
         admission_summary_path = write_capture_admission_summary(result)

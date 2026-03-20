@@ -745,7 +745,11 @@ def test_run_phase1_capture_writes_incremental_partial_summary(
     partial_summary_path = result.summary_path.with_name("summary.partial.json")
     partial_summary = json.loads(partial_summary_path.read_text(encoding="utf-8"))
 
-    assert partial_summary["session_status"] == "completed"
+    assert partial_summary["lifecycle_state"] == "completed"
+    assert [entry["state"] for entry in partial_summary["lifecycle_history"]] == [
+        "running",
+        "completed",
+    ]
     assert partial_summary["last_completed_sample_number"] == 3
     assert partial_summary["selected_market_id"] == active_candidate.market_id
     assert partial_summary["selected_window_id"] == "btc-5m-20260313T120500Z"
@@ -753,6 +757,7 @@ def test_run_phase1_capture_writes_incremental_partial_summary(
     assert partial_summary["last_healthy_timestamp_by_source"]["exchange"] is not None
     assert partial_summary["last_healthy_timestamp_by_source"]["polymarket_quotes"] is not None
     assert result.session_diagnostics.summary_partial_path == partial_summary_path
+    assert result.session_diagnostics.lifecycle_state == "completed"
 
 
 def test_run_phase1_capture_leaves_partial_artifacts_after_crash(
@@ -868,12 +873,59 @@ def test_run_phase1_capture_leaves_partial_artifacts_after_crash(
     diagnostics_path = partial_summary_path.with_name("sample_diagnostics.jsonl")
     partial_summary = json.loads(partial_summary_path.read_text(encoding="utf-8"))
 
-    assert partial_summary["session_status"] == "crashed"
+    assert partial_summary["lifecycle_state"] == "failed_cleanly"
     assert partial_summary["termination_reason"] == "uncaught_exception"
     assert partial_summary["failure_type"] == "RuntimeError"
     assert partial_summary["last_completed_sample_number"] == 2
     assert partial_summary["sample_diagnostics_path"] == str(diagnostics_path)
+    assert [entry["state"] for entry in partial_summary["lifecycle_history"]] == [
+        "running",
+        "failed_cleanly",
+    ]
     assert len(diagnostics_path.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_run_phase1_capture_leaves_partial_artifacts_after_startup_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "rtds.collectors.phase1_capture._collect_polymarket_metadata",
+        lambda config, logger: (_ for _ in ()).throw(RuntimeError("metadata boot failure")),
+    )
+
+    with pytest.raises(RuntimeError, match="metadata boot failure"):
+        run_phase1_capture(
+            Phase1CaptureConfig(
+                data_root=tmp_path / "data",
+                artifacts_root=tmp_path / "artifacts",
+                logs_root=tmp_path / "logs",
+                temp_root=tmp_path / "tmp",
+                session_id="test-session",
+                capture_started_at=datetime(2026, 3, 13, 12, 5, 0, tzinfo=UTC),
+            ),
+            logger=_logger(),
+        )
+
+    partial_summary_path = (
+        tmp_path
+        / "artifacts"
+        / "collect"
+        / "date=2026-03-13"
+        / "session=test-session"
+        / "summary.partial.json"
+    )
+    partial_summary = json.loads(partial_summary_path.read_text(encoding="utf-8"))
+
+    assert partial_summary["lifecycle_state"] == "failed_cleanly"
+    assert partial_summary["termination_reason"] == "uncaught_exception"
+    assert partial_summary["failure_type"] == "RuntimeError"
+    assert partial_summary["last_completed_sample_number"] == 0
+    assert partial_summary["selector_diagnostics"] is None
+    assert [entry["state"] for entry in partial_summary["lifecycle_history"]] == [
+        "running",
+        "failed_cleanly",
+    ]
 
 
 def test_run_with_retries_allows_http_payload_with_empty_error_list() -> None:
@@ -1207,6 +1259,15 @@ def test_run_phase1_capture_stops_when_polymarket_market_is_invalid_after_refres
     )
 
     assert result.session_diagnostics.termination_reason == "polymarket_market_invalid"
+    assert result.session_diagnostics.lifecycle_state == "aborted_source_failure"
+    assert [entry["state"] for entry in result.session_diagnostics.lifecycle_history] == [
+        "running",
+        "aborted_source_failure",
+    ]
+    partial_summary = json.loads(
+        result.session_diagnostics.summary_partial_path.read_text(encoding="utf-8")
+    )
+    assert partial_summary["lifecycle_state"] == "aborted_source_failure"
     diagnostics_row = json.loads(
         result.session_diagnostics.sample_diagnostics_path.read_text(encoding="utf-8").splitlines()[0]
     )
