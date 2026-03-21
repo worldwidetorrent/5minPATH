@@ -16,7 +16,7 @@ That question sounds small. It is not.
 
 The architecture described in this README is still the target design. The codebase now implements the core research spine, one canonical replay-day execution path, and a sanctioned phase-1 capture command that materializes real raw and normalized files. It still does not implement the full long-running live collection stack described later in this document.
 
-Implemented today:
+Implemented on `main`:
 
 - canonical core IDs, enums, time and validation utilities
 - Polymarket metadata discovery and candidate normalization
@@ -32,6 +32,11 @@ Implemented today:
 - sanctioned `./scripts/run_collectors.sh` phase-1 capture command that writes real raw and normalized JSONL files
 - integration coverage for the replay-day artifact contract
 - bounded capture resilience with retry/backoff, degraded-sample diagnostics, threshold-based early termination, and capture-session admission summaries
+- crash-safe long-run capture checkpointing, lifecycle states, watchdogs, and partial-session summarization
+- window-aware admission semantics `v2` with `legacy_verdict` preserved for comparison
+- pinned 6-hour, 12-hour, and 20-hour baseline sessions with reproducible replay/admission contracts
+- policy-v1 replay stacks and cross-horizon comparison across pinned sessions
+- first serious policy-v1 report plus stage-1 coarse `good_only` calibration with uncertainty and support flags
 
 Not yet implemented end to end:
 
@@ -634,26 +639,28 @@ If it cannot, even a clever formula is decorative.
 
 ## 18. Current status
 
-Current status: **research-spine and replay-runner phase**.
+Current status: **policy-v1 and long-run validation phase**.
 
 Implemented:
 
 - canonical schema spine and shared core utilities
 - deterministic window mapping and Chainlink anchor assignment
-- persisted `window_reference` dataset writes
-- normalized exchange and Polymarket quote state
+- normalized exchange, Polymarket, and Chainlink session-scoped datasets
 - quality, composite, volatility, fair-value, and executable-edge modules
-- snapshot assembly, labeling, simulation, and slice analysis
-- canonical `replay_day` runner and replay artifact contract
-- ADRs for window IDs, composite method, and snapshot cadence
+- snapshot assembly, labeling, simulation, slice analysis, and session-scoped replay
+- bounded and long-run capture resilience, partial-session artifacts, and replay-admission summaries
+- window-aware admission semantics `v2`
+- policy-v1 replay stacks with pinned 6-hour, 12-hour, and 20-hour baselines
+- first serious policy-v1 report and stage-1 coarse `good_only` calibration
+- ADRs for window IDs, composite method, snapshot cadence, oracle source, policy v1, and stage-1 calibration
 
 Immediate next work:
 
-- implement the remaining live collection and raw-normalization path,
-- replace placeholder Chainlink normalization,
-- persist more replay-facing datasets beyond `window_reference`,
-- run one real replay day and review the first research report,
-- define the first explicit deploy/no-trade policy.
+- complete the in-flight 24-hour validation run under the frozen stack
+- compare the 24-hour result against the pinned 6h/12h/20h baselines
+- check whether `good_only` calibration support improves materially after the 24-hour run
+- decide whether the next calibration pass stays `good_only`-only or needs a guarded `good + degraded_light` experiment
+- write the first full-cycle policy validation report after the 24-hour run finishes
 
 ---
 
