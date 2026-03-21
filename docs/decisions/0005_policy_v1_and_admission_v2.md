@@ -6,7 +6,9 @@ Accepted.
 
 ## Context
 
-The 6-hour baseline session `20260316T101341416Z` and the 12-hour pilot `20260317T033427850Z` both completed with the same structural result:
+The 6-hour baseline session `20260316T101341416Z`, the 12-hour pilot `20260317T033427850Z`,
+and the 20-hour soak-validation session `20260320T071726065Z` all completed with the same
+structural result:
 
 - zero off-family drift
 - zero unresolved selected bindings
@@ -76,16 +78,16 @@ Current policy stance:
 ## Why
 
 - The architecture and capture spine are stable enough to stop using branch-local semantics.
-- The two pinned pilot sessions agree on the structural regime map.
+- The pinned 6-hour, 12-hour, and 20-hour sessions agree on the structural regime map.
 - Window-level inclusion/exclusion matches the project design better than blunt session-wide degraded-count rejection.
-- `good_only` remains the clean first policy baseline even after degraded-light and degraded-medium stress analysis.
+- `good_only` remains the clean first policy baseline even after degraded-light and degraded-medium stress analysis and cross-horizon policy-stack comparison.
 
 ## Consequences
 
 Positive:
 
 - `main` can now carry one explicit admission contract and one explicit policy baseline.
-- The upcoming 24-hour run becomes a validation run for a frozen semantic stack, not a prerequisite for defining that stack.
+- The 24-hour run is now a validation run for a frozen semantic stack, not a prerequisite for defining that stack.
 - Future replay and capture comparisons can be judged against pinned sessions and versioned semantics.
 
 Negative:
@@ -95,4 +97,4 @@ Negative:
 
 ## Revisit
 
-Revisit this decision after the 24-hour validation run, or earlier if a later replay comparison overturns the current regime map.
+Revisit this decision after the 24-hour validation run completes, or earlier if a later replay comparison overturns the current regime map.
