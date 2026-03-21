@@ -1,0 +1,43 @@
+{
+  "calibration_id": "good-only-coarse-v1",
+  "policy_universe": "good_only",
+  "bucket_definitions": [
+    {
+      "bucket_name": "far_down",
+      "lower_bound_inclusive": "0.00",
+      "upper_bound_exclusive": "0.35"
+    },
+    {
+      "bucket_name": "lean_down",
+      "lower_bound_inclusive": "0.35",
+      "upper_bound_exclusive": "0.47"
+    },
+    {
+      "bucket_name": "near_mid",
+      "lower_bound_inclusive": "0.47",
+      "upper_bound_exclusive": "0.53"
+    },
+    {
+      "bucket_name": "lean_up",
+      "lower_bound_inclusive": "0.53",
+      "upper_bound_exclusive": "0.65"
+    },
+    {
+      "bucket_name": "far_up",
+      "lower_bound_inclusive": "0.65",
+      "upper_bound_inclusive": "1.00"
+    }
+  ],
+  "bootstrap_replicates": 1000,
+  "bootstrap_seed": 1729,
+  "support_thresholds": {
+    "sufficient": {
+      "min_window_count": 8,
+      "min_snapshot_count": 2000
+    },
+    "thin": {
+      "min_window_count": 4,
+      "min_snapshot_count": 750
+    }
+  }
+}

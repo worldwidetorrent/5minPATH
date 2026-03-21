@@ -530,7 +530,11 @@ Required: no
 
 Definition:
 
-Empirically corrected fair value. This may be null in early phases before calibration exists.
+Empirically corrected fair value. The current codebase now has a stage-1 coarse
+`good_only` calibration artifact, but it still lives outside the persisted
+snapshot row as a separate analysis output. This field therefore remains null in
+phase-1 replay rows until the calibrated layer is promoted into the canonical
+snapshot contract.
 
 ### `edge_up_raw`
 Type: decimal  

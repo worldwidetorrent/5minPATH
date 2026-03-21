@@ -348,3 +348,15 @@ Run the formal cross-horizon policy-stack comparison with:
 - it compares the same three sanctioned stacks across the pinned 6-hour, 12-hour, and 20-hour sessions
 - it preserves one fixed replay contract via [`configs/replay/task7_reference_comparison.yaml`](/home/ubuntu/testingproject/configs/replay/task7_reference_comparison.yaml)
 - use this artifact to verify that `good` remains the clean baseline universe, `degraded_light` remains a weaker exploratory overlay, and gated `degraded_medium` remains a narrow incremental slice as horizon length increases
+
+Build the first serious policy-v1 report plus the stage-1 `good_only` calibration artifact with:
+
+```bash
+.venv/bin/python -m rtds.cli.build_policy_v1_baseline
+```
+
+- this writes `artifacts/policy_v1/run_.../cross_horizon_summary.json`
+- it also writes `artifacts/policy_v1/run_.../good_only_calibration_summary.json`
+- the stage-1 calibration contract is [`configs/replay/calibration_good_only_v1.json`](/home/ubuntu/testingproject/configs/replay/calibration_good_only_v1.json)
+- the calibration is intentionally coarse: `good_only` windows only, bootstrap confidence intervals, and support flags `sufficient`, `thin`, and `merge_required`
+- use this artifact to decide where the current fair-value prior is informed enough to carry a coarse correction and where additional clean-window data is still more valuable than a finer fit
