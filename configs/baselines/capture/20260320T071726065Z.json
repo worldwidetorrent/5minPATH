@@ -1,0 +1,22 @@
+{
+  "baseline_id": "capture-baseline-20260320T071726065Z",
+  "session_id": "20260320T071726065Z",
+  "capture_date": "2026-03-20",
+  "capture_mode": "pilot",
+  "oracle_source": "chainlink_stream_public_delayed",
+  "current_admission_verdict": "conditionally_admissible",
+  "failure_reason": "session continuity passed; include or exclude windows using the window-quality policy modes",
+  "known_caveat": "Legacy not_admissible only under pre-v2 session-wide degraded-count thresholds; v2 keeps the run conditionally admissible while excluding degraded_heavy and unusable windows and requiring a context gate for degraded_medium.",
+  "expected": {
+    "verdict": "conditionally_admissible",
+    "termination_reason": "completed",
+    "off_family_switch_count": 0,
+    "selected_binding_unresolved_window_count": 0,
+    "min_mapped_window_count": 240,
+    "min_snapshot_eligible_sample_ratio": 0.93,
+    "min_high_medium_anchor_windows": 95,
+    "min_oracle_source_sample_count": 43000,
+    "min_good_window_count": 15,
+    "max_unusable_window_count": 0
+  }
+}

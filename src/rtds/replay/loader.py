@@ -40,11 +40,12 @@ def load_exchange_quotes(
 ) -> list[ExchangeQuote]:
     """Load normalized exchange quotes for one UTC date."""
 
-    root = _session_partition_root(
-        Path(data_root) / "normalized" / "exchange_quotes" / f"date={_normalize_date(date_utc)}",
+    rows = _read_partitioned_rows(
+        Path(data_root) / "normalized" / "exchange_quotes",
+        date_utc=date_utc,
         session_id=session_id,
     )
-    return [_row_to_exchange_quote(row) for row in _read_jsonl_dir(root)]
+    return [_row_to_exchange_quote(row) for row in rows]
 
 
 def load_polymarket_quotes(
@@ -55,14 +56,12 @@ def load_polymarket_quotes(
 ) -> list[PolymarketQuote]:
     """Load normalized Polymarket quotes for one UTC date."""
 
-    root = _session_partition_root(
-        Path(data_root)
-        / "normalized"
-        / "polymarket_quotes"
-        / f"date={_normalize_date(date_utc)}",
+    rows = _read_partitioned_rows(
+        Path(data_root) / "normalized" / "polymarket_quotes",
+        date_utc=date_utc,
         session_id=session_id,
     )
-    return [_row_to_polymarket_quote(row) for row in _read_jsonl_dir(root)]
+    return [_row_to_polymarket_quote(row) for row in rows]
 
 
 def load_chainlink_ticks(
@@ -73,11 +72,12 @@ def load_chainlink_ticks(
 ) -> list[ChainlinkTick]:
     """Load normalized Chainlink ticks for one UTC date."""
 
-    root = _session_partition_root(
-        Path(data_root) / "normalized" / "chainlink_ticks" / f"date={_normalize_date(date_utc)}",
+    rows = _read_partitioned_rows(
+        Path(data_root) / "normalized" / "chainlink_ticks",
+        date_utc=date_utc,
         session_id=session_id,
     )
-    return [_row_to_chainlink_tick(row) for row in _read_jsonl_dir(root)]
+    return [_row_to_chainlink_tick(row) for row in rows]
 
 
 def load_metadata_candidates(
@@ -89,13 +89,12 @@ def load_metadata_candidates(
     """Load normalized Polymarket metadata candidates for one UTC date."""
 
     normalized_root = Path(data_root) / "normalized"
-    partition = f"date={_normalize_date(date_utc)}"
     candidate_roots = (
-        normalized_root / "market_metadata_events" / partition,
-        normalized_root / "polymarket_metadata" / partition,
+        normalized_root / "market_metadata_events",
+        normalized_root / "polymarket_metadata",
     )
     for root in candidate_roots:
-        rows = _read_jsonl_dir(_session_partition_root(root, session_id=session_id))
+        rows = _read_partitioned_rows(root, date_utc=date_utc, session_id=session_id)
         if rows:
             return [_row_to_metadata_candidate(row) for row in rows]
     return []
@@ -143,6 +142,23 @@ def _session_partition_root(root: Path, *, session_id: str | None) -> Path:
     if session_id is None:
         return root
     return root / f"session={session_id}"
+
+
+def _read_partitioned_rows(
+    dataset_root: Path,
+    *,
+    date_utc: date | str,
+    session_id: str | None,
+) -> list[dict[str, Any]]:
+    if session_id is None:
+        return _read_jsonl_dir(dataset_root / f"date={_normalize_date(date_utc)}")
+
+    rows: list[dict[str, Any]] = []
+    for partition_root in sorted(dataset_root.glob("date=*/session=*")):
+        if partition_root.name != f"session={session_id}":
+            continue
+        rows.extend(_read_jsonl_dir(partition_root))
+    return rows
 
 
 def _row_to_exchange_quote(row: dict[str, Any]) -> ExchangeQuote:

@@ -1,0 +1,52 @@
+{
+  "analysis_id": "policy-v1-cross-horizon",
+  "description": "Pinned cross-horizon comparison for the policy-v1 stack using the 6-hour, 12-hour, and 20-hour capture baselines under one fixed replay contract.",
+  "comparison_config_path": "configs/replay/task7_reference_comparison.yaml",
+  "stack_order": [
+    "baseline_only",
+    "baseline_plus_degraded_light",
+    "baseline_plus_degraded_light_gated_medium"
+  ],
+  "metrics": [
+    "trade_count",
+    "hit_rate",
+    "average_selected_net_edge",
+    "total_pnl",
+    "average_roi",
+    "pnl_per_window",
+    "pnl_per_100_trades",
+    "pnl_per_1000_snapshots"
+  ],
+  "sessions": [
+    {
+      "label": "baseline_6h",
+      "session_id": "20260316T101341416Z",
+      "capture_date": "2026-03-16",
+      "baseline_manifest_path": "configs/baselines/capture/20260316T101341416Z.json",
+      "baseline_note_path": "docs/baselines/20260316T101341416Z.md",
+      "summary_path": "artifacts/collect/date=2026-03-16/session=20260316T101341416Z/summary.json",
+      "admission_summary_path": "artifacts/collect/date=2026-03-16/session=20260316T101341416Z/admission_summary.json",
+      "policy_stack_summary_path": "artifacts/replay_policy_stack/2026-03-16/session_20260316T101341416Z/run_20260317T230435Z/policy_stack_summary.json"
+    },
+    {
+      "label": "pilot_12h",
+      "session_id": "20260317T033427850Z",
+      "capture_date": "2026-03-17",
+      "baseline_manifest_path": "configs/baselines/capture/20260317T033427850Z.json",
+      "baseline_note_path": "docs/baselines/20260317T033427850Z.md",
+      "summary_path": "artifacts/collect/date=2026-03-17/session=20260317T033427850Z/summary.json",
+      "admission_summary_path": "artifacts/collect/date=2026-03-17/session=20260317T033427850Z/admission_summary.json",
+      "policy_stack_summary_path": "artifacts/replay_policy_stack/2026-03-17/session_20260317T033427850Z/run_20260317T232441Z/policy_stack_summary.json"
+    },
+    {
+      "label": "soak_20h",
+      "session_id": "20260320T071726065Z",
+      "capture_date": "2026-03-20",
+      "baseline_manifest_path": "configs/baselines/capture/20260320T071726065Z.json",
+      "baseline_note_path": "docs/baselines/20260320T071726065Z.md",
+      "summary_path": "artifacts/collect/date=2026-03-20/session=20260320T071726065Z/summary.json",
+      "admission_summary_path": "artifacts/collect/date=2026-03-20/session=20260320T071726065Z/admission_summary.json",
+      "policy_stack_summary_path": "artifacts/replay_policy_stack/2026-03-20/session_20260320T071726065Z/run_20260321T040051Z/policy_stack_summary.json"
+    }
+  ]
+}
