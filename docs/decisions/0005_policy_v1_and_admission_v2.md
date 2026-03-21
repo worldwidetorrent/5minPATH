@@ -93,7 +93,7 @@ Positive:
 Negative:
 
 - `degraded_light` and gated `degraded_medium` remain exploratory rather than baseline-admitted.
-- The system still relies on window-quality rules that may need refinement if the 24-hour validation materially disagrees with the 6-hour and 12-hour baselines.
+- The system still relies on window-quality rules that may need refinement if the 24-hour validation materially disagrees with the pinned 6-hour, 12-hour, and 20-hour baselines.
 
 ## Revisit
 

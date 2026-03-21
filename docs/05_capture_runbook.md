@@ -335,7 +335,7 @@ Run the window-aware policy stack on a pinned session with:
 - the sanctioned stacks are [`baseline_only.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_only.yaml), [`baseline_plus_degraded_light.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_plus_degraded_light.yaml), and [`baseline_plus_degraded_light_gated_medium.yaml`](/home/ubuntu/testingproject/configs/replay/policy_stacks/baseline_plus_degraded_light_gated_medium.yaml)
 - the sanctioned policy configs are [`good_only_baseline.yaml`](/home/ubuntu/testingproject/configs/replay/policies/good_only_baseline.yaml), [`degraded_light_exploratory.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_light_exploratory.yaml), and [`degraded_medium_context_gated.yaml`](/home/ubuntu/testingproject/configs/replay/policies/degraded_medium_context_gated.yaml)
 - when `--session-id` is present, replay now loads that session across all matching `date=*/session=<id>` normalized partitions, so cross-midnight sessions replay as one contiguous run
-- current result across the pinned 6-hour and 12-hour sessions: `good` remains the clean baseline universe, `degraded_light` is a measurable exploratory overlay, and gated `degraded_medium` adds only a narrow extra slice rather than a new default trading universe
+- current result across the pinned 6-hour, 12-hour, and 20-hour sessions: `good` remains the clean baseline universe, `degraded_light` is a measurable exploratory overlay, and gated `degraded_medium` adds only a narrow extra slice rather than a new default trading universe
 
 Run the formal cross-horizon policy-stack comparison with:
 
