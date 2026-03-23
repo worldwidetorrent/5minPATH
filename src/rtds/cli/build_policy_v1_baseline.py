@@ -225,9 +225,7 @@ def _render_policy_v1_report(
         for result in comparison.stack_results
         if result.stack_name == "baseline_plus_degraded_light_gated_medium"
     )
-    soak_baseline = next(
-        item for item in baseline_stack.horizons if item.session_label == "soak_20h"
-    )
+    longest_baseline = baseline_stack.horizons[-1]
     sufficient_buckets = [
         bucket.bucket_name
         for bucket in calibration_summary.buckets
@@ -249,14 +247,15 @@ def _render_policy_v1_report(
         "",
         "## Headline",
         (
-            "- `baseline_only` is now the confirmed clean policy universe across the pinned "
-            "6-hour, 12-hour, and 20-hour baselines."
+            "- `baseline_only` remains the cleanest policy universe across the pinned "
+            "6-hour, 12-hour, 20-hour, and 24-hour baselines, but the first full-day "
+            "validation is economically mixed rather than uniformly confirmatory."
         ),
         (
-            f"- The strongest validation number is the 20-hour `baseline_only` result: "
-            f"{soak_baseline.trade_count} trades, avg net edge "
-            f"{soak_baseline.average_selected_net_edge}, "
-            f"total PnL {soak_baseline.total_pnl}, avg ROI {soak_baseline.average_roi}."
+            f"- The longest-horizon result is the 24-hour `{longest_baseline.session_label}` "
+            f"`baseline_only` run: {longest_baseline.trade_count} trades, avg net edge "
+            f"{longest_baseline.average_selected_net_edge}, total PnL "
+            f"{longest_baseline.total_pnl}, avg ROI {longest_baseline.average_roi}."
         ),
         (
             "- `degraded_light` remains economically real but weaker and less stable as "
@@ -380,7 +379,9 @@ def _render_policy_v1_report(
             "- policy v1 stays frozen as baseline `good`, exploratory `degraded_light`, "
             "gated exploratory `degraded_medium`, excluded `degraded_heavy` and `unusable`.",
             "- Stage 1 calibration should start from `good_only` only.",
-            "- The next 24-hour capture should validate this structure, not redefine it.",
+            "- The 24-hour capture validated the collector and admission contract, but the "
+            "economic full-day read is now mixed and should be treated as a calibration and "
+            "diagnostic input rather than as a blanket promotion signal.",
         ]
     )
     return "\n".join(lines) + "\n"

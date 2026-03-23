@@ -1,4 +1,4 @@
-"""Compare policy-stack results across pinned 6h/12h/20h capture horizons."""
+"""Compare policy-stack results across pinned capture horizons."""
 
 from __future__ import annotations
 

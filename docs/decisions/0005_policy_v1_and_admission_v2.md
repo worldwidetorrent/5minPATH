@@ -7,7 +7,8 @@ Accepted.
 ## Context
 
 The 6-hour baseline session `20260316T101341416Z`, the 12-hour pilot `20260317T033427850Z`,
-and the 20-hour soak-validation session `20260320T071726065Z` all completed with the same
+the 20-hour soak-validation session `20260320T071726065Z`, and the 24-hour full-day validation
+session `20260321T131012752Z` all completed with the same
 structural result:
 
 - zero off-family drift
@@ -78,7 +79,7 @@ Current policy stance:
 ## Why
 
 - The architecture and capture spine are stable enough to stop using branch-local semantics.
-- The pinned 6-hour, 12-hour, and 20-hour sessions agree on the structural regime map.
+- The pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions agree on the structural regime map.
 - Window-level inclusion/exclusion matches the project design better than blunt session-wide degraded-count rejection.
 - `good_only` remains the clean first policy baseline even after degraded-light and degraded-medium stress analysis and cross-horizon policy-stack comparison.
 
@@ -87,14 +88,14 @@ Current policy stance:
 Positive:
 
 - `main` can now carry one explicit admission contract and one explicit policy baseline.
-- The 24-hour run is now a validation run for a frozen semantic stack, not a prerequisite for defining that stack.
+- The 24-hour run now validates the hardened collector and frozen semantic stack over a full day.
 - Future replay and capture comparisons can be judged against pinned sessions and versioned semantics.
 
 Negative:
 
 - `degraded_light` and gated `degraded_medium` remain exploratory rather than baseline-admitted.
-- The system still relies on window-quality rules that may need refinement if the 24-hour validation materially disagrees with the pinned 6-hour, 12-hour, and 20-hour baselines.
+- The full-day replay economics are mixed, so policy-v1 remains frozen structurally but should not be treated as economically settled without refreshed calibration and further validation.
 
 ## Revisit
 
-Revisit this decision after the 24-hour validation run completes, or earlier if a later replay comparison overturns the current regime map.
+Revisit this decision after the refreshed calibration/report pass with the 24-hour session included, or earlier if a later replay comparison overturns the current regime map.

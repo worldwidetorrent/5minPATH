@@ -20,7 +20,7 @@ The active config is [`configs/replay/calibration_good_only_v1.json`](/home/ubun
 
 ## Why
 
-Cross-horizon policy validation over the pinned 6-hour, 12-hour, and 20-hour sessions
+Cross-horizon policy validation over the pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions
 confirmed that:
 
 - `good` is the strongest clean policy universe
@@ -39,5 +39,5 @@ mixing structurally different window types.
 - Buckets with enough support can carry a provisional bucket-mean correction.
 - Buckets with weak support should be merged or left uncorrected rather than forced
   into a false-precision fit.
-- Future 24-hour validation runs test this structure; they do not redefine it by
-  default.
+- Future calibration refreshes should add clean `good` windows without redefining the
+  regime map by default.

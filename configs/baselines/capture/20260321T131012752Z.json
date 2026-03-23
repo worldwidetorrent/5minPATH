@@ -1,0 +1,22 @@
+{
+  "baseline_id": "capture-baseline-20260321T131012752Z",
+  "session_id": "20260321T131012752Z",
+  "capture_date": "2026-03-21",
+  "capture_mode": "pilot",
+  "oracle_source": "chainlink_stream_public_delayed",
+  "current_admission_verdict": "conditionally_admissible",
+  "failure_reason": "session continuity passed; include or exclude windows using the window-quality policy modes",
+  "known_caveat": "The 24-hour run completed cleanly and remains conditionally admissible under v2, but the first full-day policy-stack replay is economically mixed: all three sanctioned stacks finish negative total PnL on this session even though the clean baseline remains the strongest by average selected net edge.",
+  "expected": {
+    "verdict": "conditionally_admissible",
+    "termination_reason": "completed",
+    "off_family_switch_count": 0,
+    "selected_binding_unresolved_window_count": 0,
+    "min_mapped_window_count": 285,
+    "min_snapshot_eligible_sample_ratio": 0.94,
+    "min_high_medium_anchor_windows": 115,
+    "min_oracle_source_sample_count": 54000,
+    "min_good_window_count": 30,
+    "max_unusable_window_count": 0
+  }
+}
