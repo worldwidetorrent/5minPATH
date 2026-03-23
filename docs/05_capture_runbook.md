@@ -360,3 +360,16 @@ Build the first serious policy-v1 report plus the stage-1 `good_only` calibratio
 - the stage-1 calibration contract is [`configs/replay/calibration_good_only_v1.json`](/home/ubuntu/testingproject/configs/replay/calibration_good_only_v1.json)
 - the calibration is intentionally coarse: `good_only` windows only, bootstrap confidence intervals, and support flags `sufficient`, `thin`, and `merge_required`
 - use this artifact to decide where the current fair-value prior is informed enough to carry a coarse correction and where additional clean-window data is still more valuable than a finer fit
+
+Apply the frozen stage-1 calibrator to `baseline_only` replay across the pinned horizons with:
+
+```bash
+.venv/bin/python -m rtds.cli.compare_calibrated_baseline \
+  --manifest configs/baselines/analysis/policy_v1_calibrated_baseline.json
+```
+
+- this writes `artifacts/replay_calibrated_baseline/.../comparison_summary.json`
+- it also writes per-session row-level outputs under `artifacts/replay_calibrated_baseline/.../sessions/session_<id>/rows.jsonl`
+- each row persists raw and calibrated `F`, calibration bucket, support flag, raw and calibrated selected edges, and raw and calibrated simulated trade results
+- the frozen calibrated baseline contract keeps `policy v1`, `admission semantics v2`, `window_quality_classifier_v1`, `calibration_good_only_v1`, `chainlink_stream_public_delayed`, and the task-7 replay assumptions fixed while testing the calibrator
+- current result across the pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions is mixed: calibration improves total PnL materially on the 6-hour, 20-hour, and 24-hour `baseline_only` runs, but it worsens the 12-hour `baseline_only` run, so the next step is calibrator diagnosis rather than policy expansion

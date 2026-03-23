@@ -37,6 +37,7 @@ Implemented on `main`:
 - pinned 6-hour, 12-hour, 20-hour, and 24-hour baseline sessions with reproducible replay/admission contracts
 - policy-v1 replay stacks and cross-horizon comparison across pinned sessions
 - first serious policy-v1 report plus stage-1 coarse `good_only` calibration with uncertainty and support flags
+- frozen raw-vs-calibrated `baseline_only` replay comparison across the pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions
 
 Not yet implemented end to end:
 
@@ -76,6 +77,7 @@ The original architecture still matters and remains the north star. The current 
 - The first window-aware policy stack is now encoded in replay configs: baseline `good` windows only, exploratory `degraded_light` overlay, and tightly gated `degraded_medium` overlay for `large_positive_edge`, `mid/high_vol`, and `wide_spread` slices. Reason: policy-stack replay across the pinned 6-hour, 12-hour, and 20-hour sessions confirmed that the good-window baseline remains the clean extraction universe, while degraded overlays add narrower exploratory flow rather than a new merged default universe.
 - The formal policy-v1 cross-horizon contract is now pinned in [`configs/baselines/analysis/policy_v1_cross_horizon.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_cross_horizon.json), and the consolidated comparison can be regenerated with `python -m rtds.cli.compare_policy_horizons`. Reason: the next question is no longer per-session viability, but whether the same three sanctioned stacks preserve or change their shape across the 6-hour, 12-hour, 20-hour, and 24-hour baselines.
 - The first serious policy-v1 report and the first stage-1 `good_only` calibration pass can now be regenerated with `python -m rtds.cli.build_policy_v1_baseline`. Reason: the policy structure is no longer provisional, so the repo now needs one formal report plus one uncertainty-aware baseline calibration artifact instead of only scattered comparison summaries.
+- The frozen raw-vs-calibrated `baseline_only` replay contract is now pinned in [`configs/baselines/analysis/policy_v1_calibrated_baseline.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_calibrated_baseline.json), and the comparison can be regenerated with `python -m rtds.cli.compare_calibrated_baseline`. Reason: the next diagnostic question is whether the current `good_only` calibrator actually improves baseline replay when applied only to buckets with sufficient support.
 - The active semantic freeze is recorded in [`docs/decisions/0005_policy_v1_and_admission_v2.md`](/home/ubuntu/testingproject/docs/decisions/0005_policy_v1_and_admission_v2.md). Reason: `policy v1` and `admission semantics v2` are now live on `main`, so the repo needs one explicit decision record rather than only scattered baseline notes.
 - The first baseline calibration contract is now frozen in [`docs/decisions/0006_stage1_good_only_calibration.md`](/home/ubuntu/testingproject/docs/decisions/0006_stage1_good_only_calibration.md) and [`configs/replay/calibration_good_only_v1.json`](/home/ubuntu/testingproject/configs/replay/calibration_good_only_v1.json). Reason: the first calibration pass must stay coarse, uncertainty-aware, and `good_only`-only until more clean windows accumulate.
 - Long-running capture sessions are now crash-safe at the session-artifact layer: `sample_diagnostics.jsonl` appends as samples complete, raw/normalized session partitions are flushed incrementally during the run, `summary.partial.json` is checkpointed during the run, and each session carries an explicit lifecycle state/history (`running`, `degraded`, `completed`, `failed_cleanly`, `aborted_watchdog`, `aborted_source_failure`). Reason: the next validation step is 24-hour durability, so long sessions must either complete cleanly or fail with usable partial session state instead of disappearing silently.
@@ -651,17 +653,17 @@ Implemented:
 - snapshot assembly, labeling, simulation, slice analysis, and session-scoped replay
 - bounded and long-run capture resilience, partial-session artifacts, and replay-admission summaries
 - window-aware admission semantics `v2`
-- policy-v1 replay stacks with pinned 6-hour, 12-hour, and 20-hour baselines
-- first serious policy-v1 report and stage-1 coarse `good_only` calibration
+- policy-v1 replay stacks with pinned 6-hour, 12-hour, 20-hour, and 24-hour baselines
+- first serious policy-v1 report, stage-1 coarse `good_only` calibration, and frozen raw-vs-calibrated baseline comparison
 - ADRs for window IDs, composite method, snapshot cadence, oracle source, policy v1, and stage-1 calibration
 
 Immediate next work:
 
-- complete the in-flight 24-hour validation run under the frozen stack
-- compare the 24-hour result against the pinned 6h/12h/20h baselines
-- check whether `good_only` calibration support improves materially after the 24-hour run
+- diagnose the raw-vs-calibrated `baseline_only` split now that the 24-hour session is included
+- decide whether the current stage-1 calibrator should stay bucket-constant or become more conservative in the shoulders
+- check whether `near_mid` still needs more clean `good` windows before any stronger baseline calibrator is justified
 - decide whether the next calibration pass stays `good_only`-only or needs a guarded `good + degraded_light` experiment
-- write the first full-cycle policy validation report after the 24-hour run finishes
+- write the next policy report from the pinned 6h/12h/20h/24h calibrated baseline evidence
 
 ---
 

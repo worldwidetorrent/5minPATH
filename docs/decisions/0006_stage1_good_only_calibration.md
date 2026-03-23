@@ -39,5 +39,8 @@ mixing structurally different window types.
 - Buckets with enough support can carry a provisional bucket-mean correction.
 - Buckets with weak support should be merged or left uncorrected rather than forced
   into a false-precision fit.
+- The first sanctioned replay application of the calibrator is the frozen raw-vs-calibrated
+  `baseline_only` comparison in [`configs/baselines/analysis/policy_v1_calibrated_baseline.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_calibrated_baseline.json),
+  which applies bucket corrections only where support is `sufficient`.
 - Future calibration refreshes should add clean `good` windows without redefining the
   regime map by default.
