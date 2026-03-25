@@ -1,4 +1,8 @@
-"""Execution-v0 internal state contracts for the shadow sidecar.
+"""Lower-level execution schema compatibility layer.
+
+The canonical execution-v0 core contract now lives under `rtds.execution`.
+This module remains as a lower-level normalized-state helper while the sidecar
+is still being built.
 
 Execution v0 is intentionally narrow:
 - shadow is a secondary observer

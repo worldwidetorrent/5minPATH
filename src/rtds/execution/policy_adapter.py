@@ -11,14 +11,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from rtds.schemas.execution import ExecutionRuntimeState, IntendedExecutionTerms
+from rtds.execution.enums import NoTradeReason
+from rtds.execution.models import ExecutableStateView, ShadowDecision, TradabilityCheck
 
 
 @dataclass(slots=True, frozen=True)
 class PolicyEvaluationInput:
     """Frozen policy-evaluation input for the shadow sidecar."""
 
-    runtime_state: ExecutionRuntimeState
+    executable_state: ExecutableStateView
     min_net_edge: Decimal
     target_trade_size_contracts: Decimal
     policy_name: str
@@ -32,8 +33,9 @@ class PolicyDecision:
     policy_name: str
     policy_role: str
     eligible: bool
-    intended_terms: IntendedExecutionTerms | None
-    no_trade_reason: str | None
+    tradability_check: TradabilityCheck
+    shadow_decision: ShadowDecision | None
+    no_trade_reason: NoTradeReason | None
 
 
 __all__ = [

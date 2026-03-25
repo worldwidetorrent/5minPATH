@@ -11,109 +11,139 @@ from rtds.execution.adapters import (
     AdapterDescriptor,
     assert_live_state_adapter,
 )
-from rtds.execution.sizing import SizingInput, cap_size_to_displayed_liquidity
-from rtds.schemas.execution import (
-    CONTRACT_SIDE_DOWN,
-    CONTRACT_SIDE_UP,
-    STATE_SOURCE_LIVE,
-    STATE_SOURCE_REPLAY,
-    SUPPORT_FLAG_THIN,
-    ExecutionBookState,
-    ExecutionDecisionContext,
-    ExecutionFairValueState,
-    ExecutionRuntimeState,
-    build_taker_intended_terms,
+from rtds.execution.enums import NoTradeReason, OrderState, PolicyMode, Side
+from rtds.execution.models import (
+    BOOK_SIDE_ASK,
+    ExecutableStateView,
+    ShadowDecision,
+    ShadowOrderState,
+    TradabilityCheck,
+    build_decision_id,
 )
+from rtds.execution.sizing import SizingInput, cap_size_to_displayed_liquidity
 
 
-def _build_runtime_state() -> ExecutionRuntimeState:
-    return ExecutionRuntimeState(
-        context=ExecutionDecisionContext(
-            state_source_kind=STATE_SOURCE_LIVE,
-            decision_ts=datetime(2026, 3, 25, 12, 0, tzinfo=UTC),
-            asset_id="BTC",
-            window_id="btc-5m-20260325T120000Z",
-            window_start_ts=datetime(2026, 3, 25, 12, 0, tzinfo=UTC),
-            window_end_ts=datetime(2026, 3, 25, 12, 5, tzinfo=UTC),
-            seconds_remaining=221,
-            polymarket_market_id="0xabc123",
-            polymarket_slug="btc-updown-5m-1770000000",
-            clob_token_id_up="token-up",
-            clob_token_id_down="token-down",
-            window_quality_regime="good",
-            chainlink_confidence_state="high",
-            volatility_regime="mid_vol",
-        ),
-        fair_value=ExecutionFairValueState(
-            fair_value_base=Decimal("0.58"),
-            calibrated_fair_value_base=Decimal("0.61"),
-            calibration_bucket="far_up",
-            calibration_support_flag=SUPPORT_FLAG_THIN,
-        ),
-        book_state=ExecutionBookState(
-            quote_event_ts=datetime(2026, 3, 25, 12, 0, tzinfo=UTC),
-            quote_recv_ts=datetime(2026, 3, 25, 12, 0, 0, 2000, tzinfo=UTC),
-            quote_age_ms=12,
-            quote_source="polymarket",
-            up_bid=Decimal("0.54"),
-            up_ask=Decimal("0.56"),
-            down_bid=Decimal("0.44"),
-            down_ask=Decimal("0.46"),
-            up_bid_size_contracts=Decimal("90"),
-            up_ask_size_contracts=Decimal("25"),
-            down_bid_size_contracts=Decimal("75"),
-            down_ask_size_contracts=Decimal("30"),
-            market_spread_up_abs=Decimal("0.02"),
-            market_spread_down_abs=Decimal("0.02"),
-        ),
+def _build_state_view(*, up_ask_price: Decimal = Decimal("0.56")) -> ExecutableStateView:
+    return ExecutableStateView(
+        session_id="20260325T120000000Z",
+        state_source_kind="live_state",
+        snapshot_ts=datetime(2026, 3, 25, 12, 0, tzinfo=UTC),
+        window_id="btc-5m-20260325T120000Z",
+        window_start_ts=datetime(2026, 3, 25, 12, 0, tzinfo=UTC),
+        window_end_ts=datetime(2026, 3, 25, 12, 5, tzinfo=UTC),
+        seconds_remaining=221,
+        polymarket_market_id="0xabc123",
+        polymarket_slug="btc-updown-5m-1770000000",
+        clob_token_id_up="token-up",
+        clob_token_id_down="token-down",
+        window_quality_regime="good",
+        chainlink_confidence_state="high",
+        volatility_regime="mid_vol",
+        fair_value_base=Decimal("0.58"),
+        calibrated_fair_value_base=Decimal("0.61"),
+        calibration_bucket="far_up",
+        calibration_support_flag="sufficient",
+        quote_source="polymarket",
+        quote_event_ts=datetime(2026, 3, 25, 12, 0, tzinfo=UTC),
+        quote_recv_ts=datetime(2026, 3, 25, 12, 0, 0, 2000, tzinfo=UTC),
+        quote_age_ms=12,
+        up_bid_price=Decimal("0.54"),
+        up_ask_price=up_ask_price,
+        down_bid_price=Decimal("0.44"),
+        down_ask_price=Decimal("0.46"),
+        up_bid_size_contracts=Decimal("90"),
+        up_ask_size_contracts=Decimal("25"),
+        down_bid_size_contracts=Decimal("75"),
+        down_ask_size_contracts=Decimal("30"),
+        up_spread_abs=Decimal("0.02"),
+        down_spread_abs=Decimal("0.02"),
     )
 
 
-def test_execution_state_source_kind_marks_production_safety() -> None:
-    live_context = _build_runtime_state().context
-    replay_context = ExecutionDecisionContext(
-        state_source_kind=STATE_SOURCE_REPLAY,
-        decision_ts=live_context.decision_ts,
-        asset_id=live_context.asset_id,
-        window_id=live_context.window_id,
-        window_start_ts=live_context.window_start_ts,
-        window_end_ts=live_context.window_end_ts,
-        seconds_remaining=live_context.seconds_remaining,
-        polymarket_market_id=live_context.polymarket_market_id,
-        polymarket_slug=live_context.polymarket_slug,
-        clob_token_id_up=live_context.clob_token_id_up,
-        clob_token_id_down=live_context.clob_token_id_down,
-        window_quality_regime=live_context.window_quality_regime,
-        chainlink_confidence_state=live_context.chainlink_confidence_state,
-        volatility_regime=live_context.volatility_regime,
-    )
+def test_state_fingerprint_is_deterministic_and_changes_with_state() -> None:
+    state_view_a = _build_state_view()
+    state_view_b = _build_state_view()
+    state_view_c = _build_state_view(up_ask_price=Decimal("0.57"))
 
-    assert live_context.production_safe is True
-    assert replay_context.production_safe is False
+    assert state_view_a.state_fingerprint == state_view_b.state_fingerprint
+    assert state_view_a.state_fingerprint != state_view_c.state_fingerprint
 
 
-def test_build_taker_intended_terms_uses_correct_ask_side() -> None:
-    runtime_state = _build_runtime_state()
-
-    up_terms = build_taker_intended_terms(
-        runtime_state,
-        contract_side=CONTRACT_SIDE_UP,
+def test_shadow_decision_uses_snapshot_timestamp_and_deterministic_id() -> None:
+    state_view = _build_state_view()
+    tradability_check = TradabilityCheck(
+        policy_mode=PolicyMode.BASELINE,
+        intended_side=Side.UP,
+        intended_book_side=BOOK_SIDE_ASK,
+        intended_entry_price=Decimal("0.56"),
+        displayed_entry_size_contracts=Decimal("25"),
         target_size_contracts=Decimal("10"),
-    )
-    down_terms = build_taker_intended_terms(
-        runtime_state,
-        contract_side=CONTRACT_SIDE_DOWN,
-        target_size_contracts=Decimal("35"),
+        selected_net_edge=Decimal("0.03"),
+        selected_spread_abs=Decimal("0.02"),
+        quote_age_ms=12,
+        is_actionable=True,
+        no_trade_reason=None,
     )
 
-    assert up_terms.book_side == "ask"
-    assert up_terms.intended_price == Decimal("0.56")
-    assert up_terms.displayed_size_contracts == Decimal("25")
-    assert up_terms.enough_displayed_size is True
+    decision = ShadowDecision(
+        executable_state=state_view,
+        policy_mode=PolicyMode.BASELINE,
+        tradability_check=tradability_check,
+        decision_ts=state_view.snapshot_ts,
+        intended_side=Side.UP,
+    )
 
-    assert down_terms.intended_price == Decimal("0.46")
-    assert down_terms.displayed_size_contracts == Decimal("30")
-    assert down_terms.enough_displayed_size is False
+    assert decision.decision_ts == state_view.snapshot_ts
+    assert decision.state_fingerprint == state_view.state_fingerprint
+    assert decision.decision_id == build_decision_id(
+        session_id=state_view.session_id,
+        window_id=state_view.window_id,
+        decision_ts=state_view.snapshot_ts,
+        side=Side.UP,
+        policy_mode=PolicyMode.BASELINE,
+    )
+
+    with pytest.raises(ValueError, match="decision_ts must equal executable_state.snapshot_ts"):
+        ShadowDecision(
+            executable_state=state_view,
+            policy_mode=PolicyMode.BASELINE,
+            tradability_check=tradability_check,
+            decision_ts=datetime(2026, 3, 25, 12, 0, 1, tzinfo=UTC),
+            intended_side=Side.UP,
+        )
+
+
+def test_non_actionable_tradability_requires_strict_reason() -> None:
+    with pytest.raises(ValueError, match="require no_trade_reason"):
+        TradabilityCheck(
+            policy_mode=PolicyMode.EXPLORATORY,
+            intended_side=Side.DOWN,
+            intended_book_side=BOOK_SIDE_ASK,
+            intended_entry_price=None,
+            displayed_entry_size_contracts=None,
+            target_size_contracts=Decimal("5"),
+            selected_net_edge=None,
+            selected_spread_abs=None,
+            quote_age_ms=1200,
+            is_actionable=False,
+            no_trade_reason=None,
+        )
+
+    blocked = TradabilityCheck(
+        policy_mode=PolicyMode.EXPLORATORY,
+        intended_side=Side.DOWN,
+        intended_book_side=BOOK_SIDE_ASK,
+        intended_entry_price=None,
+        displayed_entry_size_contracts=None,
+        target_size_contracts=Decimal("5"),
+        selected_net_edge=None,
+        selected_spread_abs=None,
+        quote_age_ms=1200,
+        is_actionable=False,
+        no_trade_reason=NoTradeReason.QUOTE_STALE,
+    )
+
+    assert blocked.no_trade_reason == NoTradeReason.QUOTE_STALE
 
 
 def test_adapter_descriptor_enforces_live_vs_replay_boundary() -> None:
@@ -133,31 +163,56 @@ def test_adapter_descriptor_enforces_live_vs_replay_boundary() -> None:
     with pytest.raises(ValueError, match="live_state adapter"):
         assert_live_state_adapter(replay_descriptor)
 
-    with pytest.raises(ValueError, match="replay_tail adapters must remain non-production"):
-        AdapterDescriptor(
-            adapter_name="bad-replay",
-            adapter_role=ADAPTER_ROLE_REPLAY_TAIL,
-            production_safe=True,
-        )
-
 
 def test_sizing_caps_to_displayed_ask_liquidity() -> None:
-    runtime_state = _build_runtime_state()
+    state_view = _build_state_view()
 
     capped_size = cap_size_to_displayed_liquidity(
         SizingInput(
-            runtime_state=runtime_state,
-            contract_side=CONTRACT_SIDE_UP,
+            executable_state=state_view,
+            contract_side=Side.UP,
             target_size_contracts=Decimal("40"),
         )
     )
     uncapped_size = cap_size_to_displayed_liquidity(
         SizingInput(
-            runtime_state=runtime_state,
-            contract_side=CONTRACT_SIDE_DOWN,
+            executable_state=state_view,
+            contract_side=Side.DOWN,
             target_size_contracts=Decimal("12"),
         )
     )
 
     assert capped_size == Decimal("25")
     assert uncapped_size == Decimal("12")
+
+
+def test_shadow_order_state_uses_strict_enum() -> None:
+    state_view = _build_state_view()
+    tradability_check = TradabilityCheck(
+        policy_mode=PolicyMode.BASELINE,
+        intended_side=Side.UP,
+        intended_book_side=BOOK_SIDE_ASK,
+        intended_entry_price=Decimal("0.56"),
+        displayed_entry_size_contracts=Decimal("25"),
+        target_size_contracts=Decimal("10"),
+        selected_net_edge=Decimal("0.03"),
+        selected_spread_abs=Decimal("0.02"),
+        quote_age_ms=12,
+        is_actionable=True,
+        no_trade_reason=None,
+    )
+    decision = ShadowDecision(
+        executable_state=state_view,
+        policy_mode=PolicyMode.BASELINE,
+        tradability_check=tradability_check,
+        decision_ts=state_view.snapshot_ts,
+        intended_side=Side.UP,
+    )
+
+    order_state = ShadowOrderState(
+        decision=decision,
+        order_state=OrderState.ELIGIBLE_RECORDED,
+        updated_ts=state_view.snapshot_ts,
+    )
+
+    assert order_state.order_state == OrderState.ELIGIBLE_RECORDED

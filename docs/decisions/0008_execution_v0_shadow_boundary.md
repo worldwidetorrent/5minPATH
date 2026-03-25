@@ -33,7 +33,12 @@ The fixed boundary is:
 - shadow writes only to its own artifact tree
 - core execution consumes internal normalized execution state, not SDK objects and not raw venue payloads
 
-The frozen internal state contract lives in:
+The frozen execution-v0 core contract lives in:
+- [`src/rtds/execution/enums.py`](/home/ubuntu/testingproject/src/rtds/execution/enums.py)
+- [`src/rtds/execution/version.py`](/home/ubuntu/testingproject/src/rtds/execution/version.py)
+- [`src/rtds/execution/models.py`](/home/ubuntu/testingproject/src/rtds/execution/models.py)
+
+The older schema layer remains in:
 - [`src/rtds/schemas/execution.py`](/home/ubuntu/testingproject/src/rtds/schemas/execution.py)
 
 The frozen adapter split lives in:

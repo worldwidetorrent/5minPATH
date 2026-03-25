@@ -16,30 +16,20 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from rtds.core.units import to_decimal, validate_size
-from rtds.schemas.execution import (
-    CONTRACT_SIDE_DOWN,
-    CONTRACT_SIDE_UP,
-    ExecutionRuntimeState,
-)
-
-
-def _validate_contract_side(value: str) -> str:
-    normalized = str(value).strip().lower()
-    if normalized not in {CONTRACT_SIDE_UP, CONTRACT_SIDE_DOWN}:
-        raise ValueError(f"unsupported contract side: {value}")
-    return normalized
+from rtds.execution.enums import Side
+from rtds.execution.models import BOOK_SIDE_ASK, ExecutableStateView
 
 
 @dataclass(slots=True, frozen=True)
 class SizingInput:
     """Minimal size-selection input for taker-only shadow execution."""
 
-    runtime_state: ExecutionRuntimeState
-    contract_side: str
+    executable_state: ExecutableStateView
+    contract_side: Side
     target_size_contracts: Decimal
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "contract_side", _validate_contract_side(self.contract_side))
+        object.__setattr__(self, "contract_side", Side(self.contract_side))
         object.__setattr__(
             self,
             "target_size_contracts",
@@ -53,9 +43,9 @@ class SizingInput:
 def cap_size_to_displayed_liquidity(sizing_input: SizingInput) -> Decimal:
     """Cap intended size to the displayed ask liquidity for the selected side."""
 
-    displayed_size = sizing_input.runtime_state.book_state.size_for(
-        contract_side=sizing_input.contract_side,
-        book_side="ask",
+    displayed_size = sizing_input.executable_state.size_for(
+        side=sizing_input.contract_side,
+        book_side=BOOK_SIDE_ASK,
     )
     if displayed_size is None:
         return Decimal("0")

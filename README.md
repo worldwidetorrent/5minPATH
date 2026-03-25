@@ -38,7 +38,7 @@ Implemented on `main`:
 - policy-v1 replay stacks and cross-horizon comparison across pinned sessions
 - first serious policy-v1 report plus stage-1 coarse `good_only` calibration with uncertainty and support flags
 - frozen raw-vs-calibrated `baseline_only` replay comparison across the pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions
-- execution-v0 shadow-sidecar boundaries: live-vs-replay adapter split, runtime ownership rules, and a frozen internal execution-state contract
+- execution-v0 shadow-sidecar boundaries: live-vs-replay adapter split, runtime ownership rules, strict enums, deterministic decision IDs, and a frozen internal execution-state contract
 
 Not yet implemented end to end:
 

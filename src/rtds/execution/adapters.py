@@ -16,10 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from rtds.schemas.execution import (
+from rtds.execution.models import (
     STATE_SOURCE_LIVE,
     STATE_SOURCE_REPLAY,
-    ExecutionRuntimeState,
+    ExecutableStateView,
 )
 
 ADAPTER_ROLE_LIVE_STATE = STATE_SOURCE_LIVE
@@ -50,7 +50,7 @@ class ExecutionStateAdapter(Protocol):
 
     descriptor: AdapterDescriptor
 
-    def read_state(self) -> ExecutionRuntimeState | None:
+    def read_state(self) -> ExecutableStateView | None:
         """Return the next normalized execution state or `None` if no state is ready."""
 
     def close(self) -> None:
