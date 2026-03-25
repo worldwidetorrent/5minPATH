@@ -35,6 +35,14 @@ from rtds.execution.policy_adapter import (
     PolicyEvaluationInput,
     evaluate_policy_decision,
 )
+from rtds.execution.shadow_engine import (
+    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    DEFAULT_IDLE_SLEEP_SECONDS,
+    DEFAULT_RECENT_DECISION_BUFFER_SIZE,
+    ShadowEngine,
+    ShadowEngineConfig,
+    ShadowEngineStats,
+)
 from rtds.execution.sizing import (
     SIZE_MODE_FIXED_CONTRACTS,
     SIZE_MODE_FIXED_NOTIONAL,
@@ -68,6 +76,9 @@ __all__ = [
     "ExecutableBookContext",
     "ExecutionStateAdapter",
     "ExecutableStateView",
+    "DEFAULT_HEARTBEAT_INTERVAL_SECONDS",
+    "DEFAULT_IDLE_SLEEP_SECONDS",
+    "DEFAULT_RECENT_DECISION_BUFFER_SIZE",
     "LEDGER_STATE_SEEN",
     "LEDGER_STATE_WRITTEN",
     "LedgerEvent",
@@ -82,6 +93,9 @@ __all__ = [
     "SHADOW_SUMMARY_FILENAME",
     "SIZE_MODE_FIXED_CONTRACTS",
     "SIZE_MODE_FIXED_NOTIONAL",
+    "ShadowEngine",
+    "ShadowEngineConfig",
+    "ShadowEngineStats",
     "ShadowDecision",
     "ShadowArtifactPaths",
     "ShadowArtifactWriter",

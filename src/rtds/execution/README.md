@@ -55,6 +55,15 @@ Storage rules:
 - schema validation on write through frozen dataclass contracts
 - shadow writes only to the shadow tree, never to capture artifacts
 
+Minimal runtime is frozen to:
+- read normalized live state from a `live_state` adapter only
+- evaluate frozen policy and tradability
+- write append-only shadow decisions
+- refresh atomic shadow summary
+- log heartbeat without affecting capture
+- isolate internal exceptions and continue
+- shut down safely and close its own adapter resources
+
 Out of scope in v0:
 - live order submission
 - authenticated CLOB trading

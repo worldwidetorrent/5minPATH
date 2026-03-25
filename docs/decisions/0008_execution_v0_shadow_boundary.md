@@ -70,6 +70,14 @@ Later artifacts may be added only after the minimal runtime is working:
 - `shadow_outcomes.jsonl`
 - `shadow_vs_replay.json`
 
+The minimal runtime is now also frozen to:
+- consume `live_state` adapter output only
+- evaluate policy with the frozen decision kernel
+- write shadow decisions and refresh shadow summary
+- log heartbeat
+- isolate internal exceptions and continue
+- shut down safely without affecting capture
+
 ## Consequences
 
 What execution v0 may do:
