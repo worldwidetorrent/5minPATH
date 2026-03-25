@@ -45,6 +45,16 @@ Decision kernel is frozen to:
 - no queue-aware logic
 - no balance or venue-account logic
 
+Evidence storage is frozen initially to:
+- [`artifacts/shadow/<session_id>/shadow_decisions.jsonl`](/home/ubuntu/testingproject/artifacts/shadow)
+- [`artifacts/shadow/<session_id>/shadow_summary.json`](/home/ubuntu/testingproject/artifacts/shadow)
+
+Storage rules:
+- append-only JSONL for decisions
+- atomic summary writes
+- schema validation on write through frozen dataclass contracts
+- shadow writes only to the shadow tree, never to capture artifacts
+
 Out of scope in v0:
 - live order submission
 - authenticated CLOB trading

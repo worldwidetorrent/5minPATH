@@ -57,6 +57,19 @@ The frozen tradability mapping is:
 - `decision_ts == snapshot_ts`
 - `entry_slippage_vs_top_of_book` is a first-class kernel output
 
+The frozen initial shadow artifact tree is:
+- `artifacts/shadow/<session_id>/shadow_decisions.jsonl`
+- `artifacts/shadow/<session_id>/shadow_summary.json`
+
+The frozen initial evidence set is:
+- append-only shadow decisions
+- atomic shadow summary
+
+Later artifacts may be added only after the minimal runtime is working:
+- `shadow_order_states.jsonl`
+- `shadow_outcomes.jsonl`
+- `shadow_vs_replay.json`
+
 ## Consequences
 
 What execution v0 may do:
