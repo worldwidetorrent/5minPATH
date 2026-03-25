@@ -1,0 +1,22 @@
+{
+  "baseline_id": "capture-baseline-20260324T040815584Z",
+  "session_id": "20260324T040815584Z",
+  "capture_date": "2026-03-24",
+  "capture_mode": "pilot",
+  "oracle_source": "chainlink_stream_public_delayed",
+  "current_admission_verdict": "conditionally_admissible",
+  "failure_reason": "session continuity passed; include or exclude windows using the window-quality policy modes",
+  "known_caveat": "Day 1 of the 5-day block completed cleanly and adds a large amount of usable good-window support, but the session is still quote-noisy overall with most windows outside the clean baseline universe.",
+  "expected": {
+    "verdict": "conditionally_admissible",
+    "termination_reason": "completed",
+    "off_family_switch_count": 0,
+    "selected_binding_unresolved_window_count": 0,
+    "min_mapped_window_count": 285,
+    "min_snapshot_eligible_sample_ratio": 0.94,
+    "min_high_medium_anchor_windows": 120,
+    "min_oracle_source_sample_count": 52000,
+    "min_good_window_count": 45,
+    "max_unusable_window_count": 0
+  }
+}
