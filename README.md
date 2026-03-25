@@ -38,13 +38,13 @@ Implemented on `main`:
 - policy-v1 replay stacks and cross-horizon comparison across pinned sessions
 - first serious policy-v1 report plus stage-1 coarse `good_only` calibration with uncertainty and support flags
 - frozen raw-vs-calibrated `baseline_only` replay comparison across the pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions
-- execution-v0 shadow-sidecar boundaries: live-vs-replay adapter split, runtime ownership rules, strict enums, deterministic decision IDs, and a frozen internal execution-state contract
+- execution-v0 shadow-sidecar boundaries plus frozen book-pricing, tradability, policy-decision, and simple sizing kernels
 
 Not yet implemented end to end:
 
 - dedicated `build_snapshots` CLI is still a placeholder
 - raw event schemas are still conceptual rather than fully implemented in code
-- live shadow execution runtime is not implemented end to end; only the execution-v0 boundary and internal state contract are frozen so far
+- live shadow execution runtime is not implemented end to end; the execution-v0 boundary and deterministic decision kernel are frozen, but no live engine loop or artifact writer exists yet
 - the full intended streaming collector fleet is not implemented; the current capture path is a bounded public-endpoint snapshot session rather than a continuously running service
 - most downstream admission and replay logic still expects curated day partitions rather than a continuously running ingestion service
 

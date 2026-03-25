@@ -27,7 +27,18 @@ from rtds.execution.models import (
     TradabilityCheck,
     build_decision_id,
 )
-from rtds.execution.sizing import SizingInput, cap_size_to_displayed_liquidity
+from rtds.execution.policy_adapter import (
+    PolicyEvaluationInput,
+    evaluate_policy_decision,
+)
+from rtds.execution.sizing import (
+    SIZE_MODE_FIXED_CONTRACTS,
+    SIZE_MODE_FIXED_NOTIONAL,
+    SizingInput,
+    SizingPolicy,
+    cap_size_to_displayed_liquidity,
+    evaluate_sizing,
+)
 from rtds.execution.tradability import TradabilityPolicy, evaluate_tradability
 
 
@@ -354,3 +365,115 @@ def test_tradability_rejects_size_then_edge_then_accepts() -> None:
     assert weak_edge.tradability_check.no_trade_reason == NoTradeReason.EDGE_BELOW_THRESHOLD
     assert actionable.tradability_check.is_actionable is True
     assert actionable.tradability_check.no_trade_reason is None
+
+
+def test_sizing_supports_fixed_contracts_and_fixed_notional() -> None:
+    state_view = _build_state_view()
+    book_context = build_executable_book_context(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        target_size_contracts=Decimal("0"),
+    )
+
+    fixed_contracts = evaluate_sizing(
+        book_context=book_context,
+        sizing_policy=SizingPolicy(
+            size_mode=SIZE_MODE_FIXED_CONTRACTS,
+            fixed_size_contracts=Decimal("12"),
+        ),
+    )
+    fixed_notional = evaluate_sizing(
+        book_context=book_context,
+        sizing_policy=SizingPolicy(
+            size_mode=SIZE_MODE_FIXED_NOTIONAL,
+            fixed_notional_value=Decimal("5.6"),
+        ),
+    )
+
+    assert fixed_contracts.requested_size_contracts == Decimal("12")
+    assert fixed_contracts.intended_size_contracts == Decimal("12")
+    assert fixed_notional.requested_size_contracts == Decimal("10")
+    assert fixed_notional.intended_size_contracts == Decimal("10")
+
+
+def test_policy_adapter_returns_actionable_shadow_decision() -> None:
+    state_view = _build_state_view()
+
+    decision = evaluate_policy_decision(
+        PolicyEvaluationInput(
+            executable_state=state_view,
+            policy_mode=PolicyMode.BASELINE,
+            sizing_policy=SizingPolicy(
+                size_mode=SIZE_MODE_FIXED_CONTRACTS,
+                fixed_size_contracts=Decimal("10"),
+            ),
+            min_net_edge=Decimal("0.03"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+            policy_name="good_only_baseline",
+            policy_role="baseline",
+        )
+    )
+
+    assert decision.eligible is True
+    assert decision.intended_side == Side.UP
+    assert decision.requested_size_contracts == Decimal("10")
+    assert decision.intended_size_contracts == Decimal("10")
+    assert decision.intended_entry_price == Decimal("0.56")
+    assert decision.no_trade_reason is None
+    assert decision.shadow_decision.tradability_check.is_actionable is True
+
+
+def test_policy_adapter_returns_edge_reject_with_shadow_decision() -> None:
+    state_view = _build_state_view()
+
+    decision = evaluate_policy_decision(
+        PolicyEvaluationInput(
+            executable_state=state_view,
+            policy_mode=PolicyMode.BASELINE,
+            sizing_policy=SizingPolicy(
+                size_mode=SIZE_MODE_FIXED_CONTRACTS,
+                fixed_size_contracts=Decimal("10"),
+            ),
+            min_net_edge=Decimal("0.08"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+            policy_name="good_only_baseline",
+            policy_role="baseline",
+        )
+    )
+
+    assert decision.eligible is False
+    assert decision.intended_side == Side.UP
+    assert decision.primary_decision_reason == NoTradeReason.EDGE_BELOW_THRESHOLD
+    assert (
+        decision.shadow_decision.tradability_check.no_trade_reason
+        == NoTradeReason.EDGE_BELOW_THRESHOLD
+    )
+
+
+def test_policy_adapter_returns_sizing_zero_when_book_price_missing_for_notional() -> None:
+    state_view = replace(
+        _build_state_view(),
+        up_ask_size_contracts=Decimal("0"),
+        state_fingerprint=None,
+    )
+
+    decision = evaluate_policy_decision(
+        PolicyEvaluationInput(
+            executable_state=state_view,
+            policy_mode=PolicyMode.BASELINE,
+            sizing_policy=SizingPolicy(
+                size_mode=SIZE_MODE_FIXED_NOTIONAL,
+                fixed_notional_value=Decimal("10"),
+            ),
+            min_net_edge=Decimal("0.03"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+            policy_name="good_only_baseline",
+            policy_role="baseline",
+        )
+    )
+
+    assert decision.eligible is False
+    assert decision.primary_decision_reason == NoTradeReason.SIZING_ZERO

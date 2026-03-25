@@ -24,8 +24,20 @@ from rtds.execution.models import (
     build_decision_id,
     build_state_fingerprint,
 )
-from rtds.execution.policy_adapter import PolicyDecision, PolicyEvaluationInput
-from rtds.execution.sizing import SizingInput, cap_size_to_displayed_liquidity
+from rtds.execution.policy_adapter import (
+    PolicyDecision,
+    PolicyEvaluationInput,
+    evaluate_policy_decision,
+)
+from rtds.execution.sizing import (
+    SIZE_MODE_FIXED_CONTRACTS,
+    SIZE_MODE_FIXED_NOTIONAL,
+    SizingDecision,
+    SizingInput,
+    SizingPolicy,
+    cap_size_to_displayed_liquidity,
+    evaluate_sizing,
+)
 from rtds.execution.tradability import (
     TradabilityKernelResult,
     TradabilityPolicy,
@@ -48,10 +60,14 @@ __all__ = [
     "PolicyEvaluationInput",
     "PolicyMode",
     "SCHEMA_VERSION",
+    "SIZE_MODE_FIXED_CONTRACTS",
+    "SIZE_MODE_FIXED_NOTIONAL",
     "ShadowDecision",
     "ShadowOrderState",
     "ShadowSummary",
+    "SizingDecision",
     "SizingInput",
+    "SizingPolicy",
     "Side",
     "TradabilityCheck",
     "TradabilityKernelResult",
@@ -61,6 +77,8 @@ __all__ = [
     "build_decision_id",
     "build_state_fingerprint",
     "cap_size_to_displayed_liquidity",
+    "evaluate_policy_decision",
+    "evaluate_sizing",
     "evaluate_tradability",
     "resolve_intended_book_side",
 ]

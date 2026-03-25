@@ -37,6 +37,14 @@ Tradability kernel is frozen to:
 - `decision_ts == snapshot_ts`
 - `entry_slippage_vs_top_of_book` is a first-class output
 
+Decision kernel is frozen to:
+- one executable-state row in -> one deterministic `ShadowDecision` out
+- policy selects side from frozen fair value and top-of-book asks
+- sizing is fixed-contracts or fixed-notional only
+- intended size is capped by displayed top-of-book liquidity
+- no queue-aware logic
+- no balance or venue-account logic
+
 Out of scope in v0:
 - live order submission
 - authenticated CLOB trading
