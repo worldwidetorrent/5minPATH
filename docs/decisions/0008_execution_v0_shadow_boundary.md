@@ -47,6 +47,15 @@ The frozen adapter split lives in:
 The frozen venue-neutral core boundaries live in:
 - [`src/rtds/execution/policy_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/policy_adapter.py)
 - [`src/rtds/execution/sizing.py`](/home/ubuntu/testingproject/src/rtds/execution/sizing.py)
+- [`src/rtds/execution/book_pricer.py`](/home/ubuntu/testingproject/src/rtds/execution/book_pricer.py)
+- [`src/rtds/execution/tradability.py`](/home/ubuntu/testingproject/src/rtds/execution/tradability.py)
+
+The frozen tradability mapping is:
+- buy `up` -> `up_ask`
+- buy `down` -> `down_ask`
+- sell-style evaluation -> corresponding `bid`
+- `decision_ts == snapshot_ts`
+- `entry_slippage_vs_top_of_book` is a first-class kernel output
 
 ## Consequences
 

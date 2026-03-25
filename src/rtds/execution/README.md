@@ -17,6 +17,8 @@ Core execution consumes normalized internal state from:
 - [`enums.py`](/home/ubuntu/testingproject/src/rtds/execution/enums.py)
 - [`version.py`](/home/ubuntu/testingproject/src/rtds/execution/version.py)
 - [`models.py`](/home/ubuntu/testingproject/src/rtds/execution/models.py)
+- [`book_pricer.py`](/home/ubuntu/testingproject/src/rtds/execution/book_pricer.py)
+- [`tradability.py`](/home/ubuntu/testingproject/src/rtds/execution/tradability.py)
 
 The older [`rtds.schemas.execution`](/home/ubuntu/testingproject/src/rtds/schemas/execution.py) module remains only as a lower-level compatibility layer while the sidecar is being built.
 
@@ -25,6 +27,15 @@ Boundary rule:
 - no SDK-specific client types in core execution logic
 - no direct venue dependency in [`policy_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/policy_adapter.py)
 - no direct venue dependency in [`sizing.py`](/home/ubuntu/testingproject/src/rtds/execution/sizing.py)
+- no direct venue dependency in [`book_pricer.py`](/home/ubuntu/testingproject/src/rtds/execution/book_pricer.py)
+- no direct venue dependency in [`tradability.py`](/home/ubuntu/testingproject/src/rtds/execution/tradability.py)
+
+Tradability kernel is frozen to:
+- buy `up` -> `up_ask`
+- buy `down` -> `down_ask`
+- sell-style evaluation -> corresponding `bid`
+- `decision_ts == snapshot_ts`
+- `entry_slippage_vs_top_of_book` is a first-class output
 
 Out of scope in v0:
 - live order submission

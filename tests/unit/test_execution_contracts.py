@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -11,9 +12,15 @@ from rtds.execution.adapters import (
     AdapterDescriptor,
     assert_live_state_adapter,
 )
+from rtds.execution.book_pricer import (
+    ACTION_SELL,
+    build_executable_book_context,
+    resolve_intended_book_side,
+)
 from rtds.execution.enums import NoTradeReason, OrderState, PolicyMode, Side
 from rtds.execution.models import (
     BOOK_SIDE_ASK,
+    BOOK_SIDE_BID,
     ExecutableStateView,
     ShadowDecision,
     ShadowOrderState,
@@ -21,6 +28,7 @@ from rtds.execution.models import (
     build_decision_id,
 )
 from rtds.execution.sizing import SizingInput, cap_size_to_displayed_liquidity
+from rtds.execution.tradability import TradabilityPolicy, evaluate_tradability
 
 
 def _build_state_view(*, up_ask_price: Decimal = Decimal("0.56")) -> ExecutableStateView:
@@ -216,3 +224,133 @@ def test_shadow_order_state_uses_strict_enum() -> None:
     )
 
     assert order_state.order_state == OrderState.ELIGIBLE_RECORDED
+
+
+def test_book_pricer_freezes_buy_and_sell_side_mapping() -> None:
+    state_view = _build_state_view()
+
+    buy_down = build_executable_book_context(
+        executable_state=state_view,
+        intended_side=Side.DOWN,
+        target_size_contracts=Decimal("8"),
+    )
+    sell_up = build_executable_book_context(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        target_size_contracts=Decimal("8"),
+        aggressive_action=ACTION_SELL,
+    )
+
+    assert resolve_intended_book_side(aggressive_action="buy") == BOOK_SIDE_ASK
+    assert resolve_intended_book_side(aggressive_action="sell") == BOOK_SIDE_BID
+    assert buy_down.intended_book_side == BOOK_SIDE_ASK
+    assert buy_down.intended_entry_price == Decimal("0.46")
+    assert sell_up.intended_book_side == BOOK_SIDE_BID
+    assert sell_up.intended_entry_price == Decimal("0.54")
+
+
+def test_book_pricer_exposes_top_of_book_and_slippage_metric() -> None:
+    state_view = _build_state_view()
+
+    book_context = build_executable_book_context(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        target_size_contracts=Decimal("10"),
+        intended_entry_price=Decimal("0.58"),
+    )
+
+    assert book_context.top_bid_at_decision == Decimal("0.54")
+    assert book_context.top_ask_at_decision == Decimal("0.56")
+    assert book_context.intended_entry_price == Decimal("0.58")
+    assert book_context.spread_at_decision == Decimal("0.02")
+    assert book_context.entry_slippage_vs_top_of_book == Decimal("0.02")
+
+
+def test_tradability_rejects_stale_quotes_with_primary_reason() -> None:
+    state_view = _build_state_view()
+
+    result = evaluate_tradability(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        tradability_policy=TradabilityPolicy(
+            policy_mode=PolicyMode.BASELINE,
+            target_size_contracts=Decimal("10"),
+            max_quote_age_ms=10,
+            max_spread_abs=Decimal("0.03"),
+            min_net_edge=Decimal("0.01"),
+        ),
+        selected_net_edge=Decimal("0.05"),
+    )
+
+    assert result.tradability_check.is_actionable is False
+    assert result.tradability_check.no_trade_reason == NoTradeReason.QUOTE_STALE
+
+
+def test_tradability_rejects_missing_book_side_before_other_checks() -> None:
+    state_view = replace(
+        _build_state_view(),
+        up_ask_price=None,
+        up_ask_size_contracts=None,
+        state_fingerprint=None,
+    )
+
+    result = evaluate_tradability(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        tradability_policy=TradabilityPolicy(
+            policy_mode=PolicyMode.BASELINE,
+            target_size_contracts=Decimal("10"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+        ),
+        selected_net_edge=Decimal("0.05"),
+    )
+
+    assert result.tradability_check.is_actionable is False
+    assert result.tradability_check.no_trade_reason == NoTradeReason.MISSING_BOOK_SIDE
+
+
+def test_tradability_rejects_size_then_edge_then_accepts() -> None:
+    state_view = _build_state_view()
+
+    too_large = evaluate_tradability(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        tradability_policy=TradabilityPolicy(
+            policy_mode=PolicyMode.BASELINE,
+            target_size_contracts=Decimal("30"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+            min_net_edge=Decimal("0.02"),
+        ),
+        selected_net_edge=Decimal("0.05"),
+    )
+    weak_edge = evaluate_tradability(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        tradability_policy=TradabilityPolicy(
+            policy_mode=PolicyMode.BASELINE,
+            target_size_contracts=Decimal("10"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+            min_net_edge=Decimal("0.06"),
+        ),
+        selected_net_edge=Decimal("0.05"),
+    )
+    actionable = evaluate_tradability(
+        executable_state=state_view,
+        intended_side=Side.UP,
+        tradability_policy=TradabilityPolicy(
+            policy_mode=PolicyMode.BASELINE,
+            target_size_contracts=Decimal("10"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+            min_net_edge=Decimal("0.02"),
+        ),
+        selected_net_edge=Decimal("0.05"),
+    )
+
+    assert too_large.tradability_check.no_trade_reason == NoTradeReason.INSUFFICIENT_SIZE
+    assert weak_edge.tradability_check.no_trade_reason == NoTradeReason.EDGE_BELOW_THRESHOLD
+    assert actionable.tradability_check.is_actionable is True
+    assert actionable.tradability_check.no_trade_reason is None
