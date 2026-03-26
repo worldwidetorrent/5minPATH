@@ -39,6 +39,7 @@ Implemented on `main`:
 - first serious policy-v1 report plus stage-1 coarse `good_only` calibration with uncertainty and support flags
 - frozen raw-vs-calibrated `baseline_only` replay comparison across the pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions
 - execution-v0 shadow-sidecar boundaries plus a production-safe capture-output `live_state` adapter, frozen book-pricing, tradability, policy-decision, simple sizing, append-only shadow evidence, structured summary metrics, reconciliation outputs, and a minimal fail-open shadow runtime
+- a thin shadow launcher now exists to attach the execution sidecar to one active capture session without capture-side code changes
 
 Not yet implemented end to end:
 

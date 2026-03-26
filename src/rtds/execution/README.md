@@ -120,6 +120,10 @@ Minimal runtime is frozen to:
 - isolate internal exceptions and continue
 - shut down safely and close its own adapter resources
 
+Current launcher path:
+- [`src/rtds/cli/run_shadow_live.py`](/home/ubuntu/testingproject/src/rtds/cli/run_shadow_live.py)
+- convenience wrapper: [`scripts/run_shadow_live.sh`](/home/ubuntu/testingproject/scripts/run_shadow_live.sh)
+
 Out of scope in v0:
 - live order submission
 - authenticated CLOB trading
