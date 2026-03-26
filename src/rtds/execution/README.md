@@ -87,6 +87,12 @@ Current live-state ingestion path:
   - skip incomplete trailing lines until they are complete
   - fail open on read/decode errors by logging and continuing
 
+Emission cadence is frozen to:
+- one state emission per newly-complete Polymarket quote sample
+- freshest available Chainlink and exchange state merged into that decision-time row
+- duplicate emissions suppressed by `state_fingerprint` and decision identity
+- rows that cannot support tradability checks are skipped rather than emitted as partial executable states
+
 Current in-memory live-state cache surface:
 - latest Chainlink tick
 - latest exchange quote by venue

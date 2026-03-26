@@ -66,6 +66,12 @@ Incremental file-tail behavior is also frozen for the capture-output live-state 
 - never block capture
 - fail open on tail-read failures by logging and continuing
 
+Emission cadence is also frozen:
+- default trigger is one newly-complete Polymarket quote sample from capture
+- freshest available Chainlink and exchange state are merged into that decision-time row
+- duplicate state rows are suppressed by `state_fingerprint` and stable decision identity
+- rows that cannot support tradability checks are skipped rather than emitted as partial executable states
+
 The capture-output live-state adapter also maintains one latest-known in-memory state
 surface rather than rebuilding from scratch on each loop. That cache is frozen to:
 - latest Chainlink tick

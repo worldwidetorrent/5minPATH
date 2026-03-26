@@ -44,6 +44,7 @@ REQUIRED_NORMALIZED_DATASETS = (
     "polymarket_quotes",
 )
 OPTIONAL_SECONDARY_DATASETS = ("market_metadata_events",)
+EMISSION_CADENCE_SAMPLE_COMPLETE_POLYMARKET = "sample_complete_polymarket"
 
 
 @dataclass(slots=True, frozen=True)
@@ -91,6 +92,11 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
     - ``polymarket_quotes``
 
     ``market_metadata_events`` remains a secondary optional input only.
+
+    Emission cadence is frozen to one state row per newly-complete Polymarket quote
+    sample, with the freshest available Chainlink and exchange state merged in. Rows
+    that cannot support tradability checks are skipped rather than emitted as partial
+    executable states.
     """
 
     descriptor = AdapterDescriptor(
@@ -117,6 +123,8 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
             replay_slice_policy=config.replay_slice_policy,
             volatility_policy=config.volatility_policy,
         )
+        self._last_emitted_state_fingerprint: str | None = None
+        self._last_emitted_identity: tuple[str, object, str] | None = None
         self._pending_samples: deque[dict[str, Any]] = deque()
         self._sample_tailer = JsonlFileTail(
             pattern=(
@@ -150,9 +158,26 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
         self._refresh_tails()
         while self._pending_samples:
             sample_row = self._pending_samples.popleft()
+            if not _is_polymarket_completion_trigger(sample_row):
+                continue
             state = self._assembler.build_state(sample_row)
-            if state is not None:
-                return state
+            if state is None:
+                continue
+            if not _supports_tradability(state):
+                continue
+            identity = (
+                state.window_id,
+                state.snapshot_ts,
+                state.polymarket_market_id,
+            )
+            if (
+                state.state_fingerprint == self._last_emitted_state_fingerprint
+                or identity == self._last_emitted_identity
+            ):
+                continue
+            self._last_emitted_state_fingerprint = state.state_fingerprint
+            self._last_emitted_identity = identity
+            return state
         return None
 
     def close(self) -> None:
@@ -175,12 +200,36 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
             self._pending_samples.append(dict(row))
 
 
+def _is_polymarket_completion_trigger(sample_row: dict[str, Any]) -> bool:
+    if sample_row.get("selected_market_id") is None or sample_row.get("selected_window_id") is None:
+        return False
+    poly_result = sample_row.get("source_results", {}).get("polymarket_quotes", {})
+    return str(poly_result.get("status", "")).strip().lower() == "success"
+
+
+def _supports_tradability(state: ExecutableStateView) -> bool:
+    required_values = (
+        state.quote_event_ts,
+        state.quote_recv_ts,
+        state.up_bid_price,
+        state.up_ask_price,
+        state.down_bid_price,
+        state.down_ask_price,
+        state.up_bid_size_contracts,
+        state.up_ask_size_contracts,
+        state.down_bid_size_contracts,
+        state.down_ask_size_contracts,
+    )
+    return all(value is not None for value in required_values)
+
+
 __all__ = [
     "CaptureOutputLiveStateAdapter",
     "CaptureOutputLiveStateConfig",
     "CaptureOutputDerivedStateView",
     "CaptureOutputLiveStateCache",
     "CaptureOutputStateAssembler",
+    "EMISSION_CADENCE_SAMPLE_COMPLETE_POLYMARKET",
     "OPTIONAL_SECONDARY_DATASETS",
     "REQUIRED_NORMALIZED_DATASETS",
 ]
