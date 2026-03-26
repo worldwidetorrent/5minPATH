@@ -43,6 +43,17 @@ print(runs[-1])
 PY
 }
 
+wait_for_latest_run_dir() {
+  local root="$1"
+  while true; do
+    if run_dir="$(latest_run_dir "$root" 2>/dev/null)"; then
+      echo "$run_dir"
+      return 0
+    fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
 wait_for_file() {
   local path="$1"
   while [[ ! -f "$path" ]]; do
@@ -52,7 +63,7 @@ wait_for_file() {
 
 echo "waiting for Day analysis prerequisites for session ${SESSION_ID}"
 
-POLICY_STACK_RUN_DIR="$(latest_run_dir "$POLICY_STACK_SESSION_ROOT")"
+POLICY_STACK_RUN_DIR="$(wait_for_latest_run_dir "$POLICY_STACK_SESSION_ROOT")"
 POLICY_STACK_SUMMARY="${POLICY_STACK_RUN_DIR}/policy_stack_summary.json"
 echo "waiting for policy stack summary: ${POLICY_STACK_SUMMARY}"
 wait_for_file "$POLICY_STACK_SUMMARY"
@@ -62,7 +73,7 @@ echo "running calibrated baseline replay"
 python3 -m rtds.cli.compare_calibrated_baseline --manifest "$CALIBRATED_MANIFEST"
 
 CALIBRATED_ROOT="${OUTPUT_ROOT}/replay_calibrated_baseline/policy-v1-good-only-calibrated-baseline"
-CALIBRATED_RUN_DIR="$(latest_run_dir "$CALIBRATED_ROOT")"
+CALIBRATED_RUN_DIR="$(wait_for_latest_run_dir "$CALIBRATED_ROOT")"
 CALIBRATED_SUMMARY="${CALIBRATED_RUN_DIR}/comparison_summary.json"
 if [[ ! -f "$CALIBRATED_SUMMARY" ]]; then
   echo "missing calibrated baseline summary: ${CALIBRATED_SUMMARY}" >&2
@@ -73,7 +84,7 @@ echo "refreshing policy-v1 support and calibration report"
 python3 -m rtds.cli.build_policy_v1_baseline
 
 POLICY_V1_ROOT="${OUTPUT_ROOT}/policy_v1"
-POLICY_V1_RUN_DIR="$(latest_run_dir "$POLICY_V1_ROOT")"
+POLICY_V1_RUN_DIR="$(wait_for_latest_run_dir "$POLICY_V1_ROOT")"
 POLICY_V1_CALIBRATION="${POLICY_V1_RUN_DIR}/good_only_calibration_summary.json"
 POLICY_V1_HORIZON="${POLICY_V1_RUN_DIR}/cross_horizon_summary.json"
 if [[ ! -f "$POLICY_V1_CALIBRATION" || ! -f "$POLICY_V1_HORIZON" ]]; then
