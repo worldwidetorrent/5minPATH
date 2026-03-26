@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, fields
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Mapping
 
 from rtds.core.time import ensure_utc, format_utc, format_utc_compact
 from rtds.core.units import (
@@ -86,7 +86,7 @@ def _serialize_fingerprint_value(value: object) -> Any:
         return str(value)
     if isinstance(value, (Side, PolicyMode, OrderState, NoTradeReason)):
         return value.value
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {key: _serialize_fingerprint_value(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [_serialize_fingerprint_value(item) for item in value]
@@ -134,6 +134,11 @@ class ExecutableStateView:
     exchange_event_ts: datetime | None = None
     exchange_trusted_venue_count: int = 0
     exchange_rejected_venue_count: int = 0
+    exchange_present_by_venue: dict[str, bool] | None = None
+    exchange_event_ts_by_venue: dict[str, datetime | None] | None = None
+    exchange_mid_price_by_venue: dict[str, Decimal | None] | None = None
+    exchange_eligible_by_venue: dict[str, bool] | None = None
+    exchange_ineligible_reason_by_venue: dict[str, str | None] | None = None
     open_anchor_present: bool = False
     composite_nowcast_present: bool = False
     nowcast_history_length: int = 0
@@ -178,6 +183,74 @@ class ExecutableStateView:
             raise ValueError("exchange_rejected_venue_count must be non-negative")
         if self.nowcast_history_length < 0:
             raise ValueError("nowcast_history_length must be non-negative")
+        object.__setattr__(
+            self,
+            "exchange_present_by_venue",
+            {
+                str(venue_id): bool(present)
+                for venue_id, present in sorted(
+                    (self.exchange_present_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_event_ts_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if event_ts is None
+                    else ensure_utc(
+                        event_ts,
+                        field_name=f"exchange_event_ts_by_venue[{venue_id}]",
+                    )
+                )
+                for venue_id, event_ts in sorted(
+                    (self.exchange_event_ts_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_mid_price_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if mid_price is None
+                    else to_decimal(
+                        mid_price,
+                        field_name=f"exchange_mid_price_by_venue[{venue_id}]",
+                    )
+                )
+                for venue_id, mid_price in sorted(
+                    (self.exchange_mid_price_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_eligible_by_venue",
+            {
+                str(venue_id): bool(eligible)
+                for venue_id, eligible in sorted(
+                    (self.exchange_eligible_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_ineligible_reason_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if reason is None
+                    else str(reason).strip().lower() or None
+                )
+                for venue_id, reason in sorted(
+                    (self.exchange_ineligible_reason_by_venue or {}).items()
+                )
+            },
+        )
         for field_name in (
             "fair_value_base",
             "calibrated_fair_value_base",

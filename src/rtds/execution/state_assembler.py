@@ -27,12 +27,18 @@ from rtds.features.volatility import (
     compute_volatility_from_nowcasts,
 )
 from rtds.mapping.anchor_assignment import ChainlinkTick
+from rtds.quality.dispersion import assess_exchange_composite_quality
+from rtds.quality.freshness import assess_source_freshness
 from rtds.replay.calibrated_baseline import (
     FrozenCalibrationRuntime,
     apply_frozen_stage1_calibration,
 )
 from rtds.replay.slices import DEFAULT_REPLAY_SLICE_POLICY, ReplaySlicePolicy
-from rtds.schemas.normalized import ExchangeQuote, PolymarketQuote
+from rtds.schemas.normalized import (
+    SUPPORTED_EXCHANGE_QUOTE_VENUES,
+    ExchangeQuote,
+    PolymarketQuote,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -184,6 +190,10 @@ class CaptureOutputStateAssembler:
             else derived_state.current_oracle_tick.event_ts
         )
         exchange_event_ts = _max_exchange_event_ts(self.state_cache.latest_exchange_by_venue)
+        exchange_diagnostics = _build_exchange_venue_diagnostics(
+            self.state_cache.latest_exchange_by_venue,
+            decision_ts=sample_ts,
+        )
 
         if (
             selected_window_id_str not in self.open_anchor_by_window
@@ -307,6 +317,11 @@ class CaptureOutputStateAssembler:
             market_actionable_flag=sample_row.get("sample_status") != "failed",
             exchange_trusted_venue_count=exchange_trusted_venue_count,
             exchange_rejected_venue_count=exchange_rejected_venue_count,
+            exchange_present_by_venue=exchange_diagnostics.present_by_venue,
+            exchange_event_ts_by_venue=exchange_diagnostics.event_ts_by_venue,
+            exchange_mid_price_by_venue=exchange_diagnostics.mid_price_by_venue,
+            exchange_eligible_by_venue=exchange_diagnostics.eligible_by_venue,
+            exchange_ineligible_reason_by_venue=exchange_diagnostics.ineligible_reason_by_venue,
             open_anchor_present=open_anchor_present,
             composite_nowcast_present=(
                 composite_nowcast is not None
@@ -406,6 +421,87 @@ def _max_exchange_event_ts(exchange_by_venue: dict[str, ExchangeQuote]) -> datet
     if not exchange_by_venue:
         return None
     return max(quote.event_ts for quote in exchange_by_venue.values())
+
+
+@dataclass(slots=True, frozen=True)
+class ExchangeVenueDiagnostics:
+    present_by_venue: dict[str, bool]
+    event_ts_by_venue: dict[str, datetime | None]
+    mid_price_by_venue: dict[str, Decimal | None]
+    eligible_by_venue: dict[str, bool]
+    ineligible_reason_by_venue: dict[str, str | None]
+
+
+def _build_exchange_venue_diagnostics(
+    exchange_by_venue: dict[str, ExchangeQuote],
+    *,
+    decision_ts: datetime,
+) -> ExchangeVenueDiagnostics:
+    eligible_quotes = {
+        venue_id: quote
+        for venue_id, quote in exchange_by_venue.items()
+        if quote.event_ts <= decision_ts
+    }
+    quality_state = assess_exchange_composite_quality(
+        eligible_quotes.values(),
+        as_of_ts=decision_ts,
+    )
+    outlier_ids = set(quality_state.outlier_venue_ids)
+    trusted_ids = set(quality_state.trusted_venue_ids)
+
+    present_by_venue: dict[str, bool] = {}
+    event_ts_by_venue: dict[str, datetime | None] = {}
+    mid_price_by_venue: dict[str, Decimal | None] = {}
+    eligible_by_venue: dict[str, bool] = {}
+    ineligible_reason_by_venue: dict[str, str | None] = {}
+
+    for venue in SUPPORTED_EXCHANGE_QUOTE_VENUES:
+        venue_id = venue.value
+        quote = exchange_by_venue.get(venue_id)
+        present_by_venue[venue_id] = quote is not None
+        event_ts_by_venue[venue_id] = None if quote is None else quote.event_ts
+        mid_price_by_venue[venue_id] = None if quote is None else quote.mid_price
+        if quote is None:
+            eligible_by_venue[venue_id] = False
+            ineligible_reason_by_venue[venue_id] = "missing_from_cache"
+            continue
+        if quote.event_ts > decision_ts:
+            eligible_by_venue[venue_id] = False
+            ineligible_reason_by_venue[venue_id] = "future_source_ts"
+            continue
+
+        freshness = assess_source_freshness(
+            venue_id,
+            as_of_ts=decision_ts,
+            last_event_ts=quote.event_ts,
+        )
+        if not freshness.usable_flag:
+            eligible_by_venue[venue_id] = False
+            if freshness.missing_flag:
+                ineligible_reason_by_venue[venue_id] = "missing_source"
+            elif freshness.stale_flag:
+                ineligible_reason_by_venue[venue_id] = "stale_source"
+            else:
+                ineligible_reason_by_venue[venue_id] = "freshness_unusable"
+            continue
+
+        if venue_id in outlier_ids:
+            eligible_by_venue[venue_id] = False
+            ineligible_reason_by_venue[venue_id] = "outlier_rejected"
+            continue
+
+        eligible_by_venue[venue_id] = venue_id in trusted_ids
+        ineligible_reason_by_venue[venue_id] = (
+            None if venue_id in trusted_ids else "not_trusted"
+        )
+
+    return ExchangeVenueDiagnostics(
+        present_by_venue=present_by_venue,
+        event_ts_by_venue=event_ts_by_venue,
+        mid_price_by_venue=mid_price_by_venue,
+        eligible_by_venue=eligible_by_venue,
+        ineligible_reason_by_venue=ineligible_reason_by_venue,
+    )
 
 
 def _state_invalid_reason(

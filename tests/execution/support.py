@@ -70,6 +70,23 @@ def build_state_view(
         market_actionable_flag=market_actionable_flag,
         exchange_trusted_venue_count=3,
         exchange_rejected_venue_count=0,
+        exchange_present_by_venue={"binance": True, "coinbase": True, "kraken": True},
+        exchange_event_ts_by_venue={
+            "binance": decision_ts,
+            "coinbase": decision_ts,
+            "kraken": decision_ts,
+        },
+        exchange_mid_price_by_venue={
+            "binance": Decimal("70000"),
+            "coinbase": Decimal("70001"),
+            "kraken": Decimal("69999"),
+        },
+        exchange_eligible_by_venue={"binance": True, "coinbase": True, "kraken": True},
+        exchange_ineligible_reason_by_venue={
+            "binance": None,
+            "coinbase": None,
+            "kraken": None,
+        },
         open_anchor_present=True,
         composite_nowcast_present=True,
         nowcast_history_length=32,
