@@ -84,6 +84,19 @@ Current live-state ingestion path:
   - skip incomplete trailing lines until they are complete
   - fail open on read/decode errors by logging and continuing
 
+Current in-memory live-state cache surface:
+- latest Chainlink tick
+- latest exchange quote by venue
+- latest exchange mid by venue
+- latest Polymarket quote by market
+- optional latest metadata row by market
+
+Minimal derived state for one decision timestamp:
+- current oracle tick
+- latest exchange mids by venue
+- latest Polymarket executable book for the selected market
+- quote age relative to the decision timestamp
+
 Input-surface freeze for v0:
 - no second truth source beyond those normalized session-scoped capture outputs
 - price, spread, size, freshness, and timing come only from the three primary datasets above

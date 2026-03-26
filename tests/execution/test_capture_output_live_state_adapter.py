@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 from rtds.execution.capture_output_live_state_adapter import (
@@ -49,7 +50,143 @@ def test_capture_output_adapter_builds_executable_state_from_session_outputs(tmp
     assert state.fair_value_base is not None
     assert state.calibrated_fair_value_base == state.fair_value_base
     assert state.up_ask_price is not None
+    assert adapter.state_cache.latest_chainlink_tick is not None
+    assert adapter.state_cache.latest_exchange_mid_by_venue == {
+        "binance": _decimal("70500.00"),
+        "coinbase": _decimal("70510.00"),
+        "kraken": _decimal("70520.00"),
+    }
     assert adapter.read_state() is None
+
+
+def test_capture_output_adapter_updates_cached_live_surface_incrementally(tmp_path) -> None:
+    session_id = "20260326T010000000Z"
+    _write_fixture_session(tmp_path, session_id=session_id)
+    adapter = CaptureOutputLiveStateAdapter(
+        CaptureOutputLiveStateConfig(
+            session_id=session_id,
+            normalized_root=tmp_path / "data/normalized",
+            artifacts_root=tmp_path / "artifacts/collect",
+        )
+    )
+
+    first_state = adapter.read_state()
+
+    assert first_state is not None
+    assert adapter.state_cache.latest_chainlink_tick is not None
+    assert adapter.state_cache.latest_chainlink_tick.price == _decimal("70000")
+    assert adapter.state_cache.latest_exchange_mid_by_venue == {
+        "binance": _decimal("70500.00"),
+        "coinbase": _decimal("70510.00"),
+        "kraken": _decimal("70520.00"),
+    }
+
+    _append_jsonl(
+        tmp_path
+        / f"data/normalized/chainlink_ticks/date=2026-03-26/session={session_id}/part-00000.jsonl",
+        [
+            {
+                "event_id": "chain-2",
+                "event_ts": "2026-03-26T01:00:06Z",
+                "price": "70010",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "oracle_source": "chainlink_stream_public_delayed",
+                "oracle_feed_id": "chainlink:stream:BTC-USD",
+                "round_id": None,
+                "bid_price": "70009",
+                "ask_price": "70011",
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path
+        / f"data/normalized/exchange_quotes/date=2026-03-26/session={session_id}/part-00000.jsonl",
+        [
+            _exchange_row("binance", "binance:spot:BTCUSDT", "70600.0"),
+        ],
+    )
+    _append_jsonl(
+        tmp_path
+        / (
+            "data/normalized/polymarket_quotes/"
+            f"date=2026-03-26/session={session_id}/part-00000.jsonl"
+        ),
+        [
+            {
+                "venue_id": "polymarket",
+                "market_id": "0xmarket",
+                "asset_id": "BTC",
+                "event_ts": "2026-03-26T01:00:06Z",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "proc_ts": "2026-03-26T01:00:06Z",
+                "up_bid": "0.61",
+                "up_ask": "0.63",
+                "down_bid": "0.37",
+                "down_ask": "0.39",
+                "up_bid_size_contracts": "55",
+                "up_ask_size_contracts": "44",
+                "down_bid_size_contracts": "55",
+                "down_ask_size_contracts": "44",
+                "raw_event_id": "rawpoly:2",
+                "normalizer_version": "0.1.0",
+                "schema_version": "0.1.0",
+                "created_ts": "2026-03-26T01:00:06Z",
+                "token_yes_id": "up-token",
+                "token_no_id": "down-token",
+                "market_quote_type": "orderbook_top",
+                "quote_sequence_id": "seq-2",
+                "market_mid_up": "0.62",
+                "market_mid_down": "0.38",
+                "market_spread_up_abs": "0.02",
+                "market_spread_down_abs": "0.02",
+                "last_trade_price": None,
+                "last_trade_size_contracts": None,
+                "last_trade_side": None,
+                "last_trade_outcome": None,
+                "source_event_missing_ts_flag": False,
+                "crossed_market_flag": False,
+                "locked_market_flag": False,
+                "quote_completeness_flag": True,
+                "normalization_status": "normalized",
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path
+        / f"artifacts/collect/date=2026-03-26/session={session_id}/sample_diagnostics.jsonl",
+        [
+            {
+                "sample_index": 2,
+                "sample_started_at": "2026-03-26T01:00:06.000Z",
+                "sample_status": "healthy",
+                "degraded_sources": [],
+                "selected_market_id": "0xmarket",
+                "selected_market_slug": "btc-updown-5m-1770000600",
+                "selected_window_id": "btc-5m-20260326T010000Z",
+                "source_results": {
+                    "chainlink": {"status": "success", "details": {"fallback_used": False}},
+                    "polymarket_quotes": {
+                        "status": "success",
+                        "details": {"seconds_remaining": 294},
+                    },
+                },
+            }
+        ],
+    )
+
+    second_state = adapter.read_state()
+
+    assert second_state is not None
+    assert adapter.state_cache.latest_chainlink_tick is not None
+    assert adapter.state_cache.latest_chainlink_tick.price == _decimal("70010")
+    assert adapter.state_cache.latest_exchange_mid_by_venue["binance"] == _decimal("70600.00")
+    derived = adapter.state_cache.derived_for_market(
+        "0xmarket",
+        decision_ts=second_state.snapshot_ts,
+    )
+    assert derived.latest_polymarket_quote is not None
+    assert derived.latest_polymarket_quote.up_ask == _decimal("0.63")
+    assert derived.quote_age_ms == 0
 
 
 def test_capture_output_adapter_wires_into_shadow_engine(tmp_path) -> None:
@@ -261,3 +398,14 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as handle:
         for row in rows:
             handle.write(json.dumps(row) + "\n")
+
+
+def _append_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+
+def _decimal(value: str) -> Decimal:
+    return Decimal(value)

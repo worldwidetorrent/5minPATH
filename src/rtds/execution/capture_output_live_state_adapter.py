@@ -89,6 +89,59 @@ class CaptureOutputLiveStateConfig:
                 Path(self.calibration_summary_path),
             )
 
+
+@dataclass(slots=True, frozen=True)
+class CaptureOutputDerivedStateView:
+    """Minimal latest-known derived state for one decision timestamp."""
+
+    decision_ts: datetime
+    current_oracle_tick: ChainlinkTick | None
+    latest_exchange_mid_by_venue: dict[str, Decimal]
+    latest_polymarket_quote: PolymarketQuote | None
+    quote_age_ms: int | None
+
+
+@dataclass(slots=True)
+class CaptureOutputLiveStateCache:
+    """Incrementally updated latest-known state surface for execution."""
+
+    latest_chainlink_tick: ChainlinkTick | None = None
+    latest_exchange_by_venue: dict[str, ExchangeQuote] = field(default_factory=dict)
+    latest_exchange_mid_by_venue: dict[str, Decimal] = field(default_factory=dict)
+    latest_polymarket_by_market: dict[str, PolymarketQuote] = field(default_factory=dict)
+    latest_metadata_by_market: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def update_chainlink_tick(self, tick: ChainlinkTick) -> None:
+        self.latest_chainlink_tick = tick
+
+    def update_exchange_quote(self, quote: ExchangeQuote) -> None:
+        self.latest_exchange_by_venue[quote.venue_id] = quote
+        self.latest_exchange_mid_by_venue[quote.venue_id] = quote.mid_price
+
+    def update_polymarket_quote(self, quote: PolymarketQuote) -> None:
+        self.latest_polymarket_by_market[quote.market_id] = quote
+
+    def update_metadata_row(self, market_id: str, payload: dict[str, Any]) -> None:
+        self.latest_metadata_by_market[market_id] = dict(payload)
+
+    def derived_for_market(
+        self,
+        market_id: str,
+        *,
+        decision_ts: datetime,
+    ) -> CaptureOutputDerivedStateView:
+        quote = self.latest_polymarket_by_market.get(str(market_id))
+        quote_age_ms = None
+        if quote is not None and quote.recv_ts is not None:
+            quote_age_ms = max(0, int((decision_ts - quote.recv_ts).total_seconds() * 1000))
+        return CaptureOutputDerivedStateView(
+            decision_ts=decision_ts,
+            current_oracle_tick=self.latest_chainlink_tick,
+            latest_exchange_mid_by_venue=dict(self.latest_exchange_mid_by_venue),
+            latest_polymarket_quote=quote,
+            quote_age_ms=quote_age_ms,
+        )
+
 @dataclass(slots=True)
 class CaptureOutputStateAssembler:
     """Assemble one execution state row from tailed normalized capture outputs.
@@ -103,28 +156,29 @@ class CaptureOutputStateAssembler:
     calibration_runtime: FrozenCalibrationRuntime | None = None
     replay_slice_policy: ReplaySlicePolicy = DEFAULT_REPLAY_SLICE_POLICY
     volatility_policy: VolatilityPolicy = DEFAULT_VOLATILITY_POLICY
-    latest_chainlink_tick: ChainlinkTick | None = None
-    latest_exchange_by_venue: dict[str, ExchangeQuote] = field(default_factory=dict)
-    latest_polymarket_by_market: dict[str, PolymarketQuote] = field(default_factory=dict)
-    latest_metadata_by_market: dict[str, dict[str, Any]] = field(default_factory=dict)
+    state_cache: CaptureOutputLiveStateCache = field(default_factory=CaptureOutputLiveStateCache)
     open_anchor_by_window: dict[str, Decimal] = field(default_factory=dict)
     nowcast_history: deque[CompositeNowcast] = field(default_factory=lambda: deque(maxlen=256))
 
     def ingest_chainlink_row(self, payload: dict[str, Any]) -> None:
-        self.latest_chainlink_tick = ChainlinkTick(
-            event_id=str(payload["event_id"]),
-            event_ts=parse_utc(str(payload["event_ts"])),
-            price=payload["price"],
-            recv_ts=(
-                None
-                if payload.get("recv_ts") is None
-                else parse_utc(str(payload.get("recv_ts")))
-            ),
-            oracle_feed_id=str(payload.get("oracle_feed_id", "chainlink:stream:BTC-USD")),
-            round_id=None if payload.get("round_id") is None else str(payload.get("round_id")),
-            oracle_source=str(payload.get("oracle_source", "")),
-            bid_price=payload.get("bid_price"),
-            ask_price=payload.get("ask_price"),
+        self.state_cache.update_chainlink_tick(
+            ChainlinkTick(
+                event_id=str(payload["event_id"]),
+                event_ts=parse_utc(str(payload["event_ts"])),
+                price=payload["price"],
+                recv_ts=(
+                    None
+                    if payload.get("recv_ts") is None
+                    else parse_utc(str(payload.get("recv_ts")))
+                ),
+                oracle_feed_id=str(payload.get("oracle_feed_id", "chainlink:stream:BTC-USD")),
+                round_id=(
+                    None if payload.get("round_id") is None else str(payload.get("round_id"))
+                ),
+                oracle_source=str(payload.get("oracle_source", "")),
+                bid_price=payload.get("bid_price"),
+                ask_price=payload.get("ask_price"),
+            )
         )
 
     def ingest_exchange_row(self, payload: dict[str, Any]) -> None:
@@ -137,7 +191,7 @@ class CaptureOutputStateAssembler:
                 "created_ts": parse_utc(str(payload["created_ts"])),
             }
         )
-        self.latest_exchange_by_venue[quote.venue_id] = quote
+        self.state_cache.update_exchange_quote(quote)
 
     def ingest_polymarket_row(self, payload: dict[str, Any]) -> None:
         quote = PolymarketQuote(
@@ -149,11 +203,11 @@ class CaptureOutputStateAssembler:
                 "created_ts": parse_utc(str(payload["created_ts"])),
             }
         )
-        self.latest_polymarket_by_market[quote.market_id] = quote
+        self.state_cache.update_polymarket_quote(quote)
 
     def ingest_metadata_row(self, payload: dict[str, Any]) -> None:
         market_id = str(payload["market_id"])
-        self.latest_metadata_by_market[market_id] = dict(payload)
+        self.state_cache.update_metadata_row(market_id, payload)
 
     def build_state(self, sample_row: dict[str, Any]) -> ExecutableStateView | None:
         selected_market_id = sample_row.get("selected_market_id")
@@ -161,8 +215,12 @@ class CaptureOutputStateAssembler:
         if selected_market_id is None or selected_window_id is None:
             return None
         sample_ts = parse_utc(str(sample_row["sample_started_at"]))
-        polymarket_quote = self.latest_polymarket_by_market.get(str(selected_market_id))
-        metadata = self.latest_metadata_by_market.get(str(selected_market_id), {})
+        derived_state = self.state_cache.derived_for_market(
+            str(selected_market_id),
+            decision_ts=sample_ts,
+        )
+        polymarket_quote = derived_state.latest_polymarket_quote
+        metadata = self.state_cache.latest_metadata_by_market.get(str(selected_market_id), {})
         window_start_ts = parse_window_id(str(selected_window_id))[1]
         window_end_ts = window_start_ts + timedelta(minutes=5)
         seconds_remaining = _seconds_remaining(
@@ -173,9 +231,11 @@ class CaptureOutputStateAssembler:
 
         if (
             str(selected_window_id) not in self.open_anchor_by_window
-            and self.latest_chainlink_tick is not None
+            and derived_state.current_oracle_tick is not None
         ):
-            self.open_anchor_by_window[str(selected_window_id)] = self.latest_chainlink_tick.price
+            self.open_anchor_by_window[str(selected_window_id)] = (
+                derived_state.current_oracle_tick.price
+            )
         open_anchor = self.open_anchor_by_window.get(str(selected_window_id))
 
         composite_nowcast = self._build_composite_nowcast(sample_ts)
@@ -204,12 +264,6 @@ class CaptureOutputStateAssembler:
 
         quote_event_ts = None if polymarket_quote is None else polymarket_quote.event_ts
         quote_recv_ts = None if polymarket_quote is None else polymarket_quote.recv_ts
-        quote_age_ms = None
-        if quote_recv_ts is not None:
-            quote_age_ms = max(
-                0,
-                int((sample_ts - quote_recv_ts).total_seconds() * 1000),
-            )
 
         return ExecutableStateView(
             session_id=self.session_id,
@@ -250,7 +304,7 @@ class CaptureOutputStateAssembler:
             quote_source="polymarket",
             quote_event_ts=quote_event_ts,
             quote_recv_ts=quote_recv_ts,
-            quote_age_ms=quote_age_ms,
+            quote_age_ms=derived_state.quote_age_ms,
             up_bid_price=None if polymarket_quote is None else polymarket_quote.up_bid,
             up_ask_price=None if polymarket_quote is None else polymarket_quote.up_ask,
             down_bid_price=None if polymarket_quote is None else polymarket_quote.down_bid,
@@ -277,7 +331,7 @@ class CaptureOutputStateAssembler:
         )
 
     def _build_composite_nowcast(self, sample_ts: datetime) -> CompositeNowcast | None:
-        quotes = list(self.latest_exchange_by_venue.values())
+        quotes = list(self.state_cache.latest_exchange_by_venue.values())
         if not quotes:
             return None
         try:
@@ -380,6 +434,10 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
     def close(self) -> None:
         self._closed = True
 
+    @property
+    def state_cache(self) -> CaptureOutputLiveStateCache:
+        return self._assembler.state_cache
+
     def _refresh_tails(self) -> None:
         for row in self._chainlink_tailer.read_new_rows():
             self._assembler.ingest_chainlink_row(row)
@@ -453,6 +511,8 @@ def _volatility_regime(
 __all__ = [
     "CaptureOutputLiveStateAdapter",
     "CaptureOutputLiveStateConfig",
+    "CaptureOutputDerivedStateView",
+    "CaptureOutputLiveStateCache",
     "CaptureOutputStateAssembler",
     "OPTIONAL_SECONDARY_DATASETS",
     "REQUIRED_NORMALIZED_DATASETS",

@@ -15,7 +15,9 @@ from rtds.execution.book_pricer import (
     resolve_intended_book_side,
 )
 from rtds.execution.capture_output_live_state_adapter import (
+    CaptureOutputDerivedStateView,
     CaptureOutputLiveStateAdapter,
+    CaptureOutputLiveStateCache,
     CaptureOutputLiveStateConfig,
     CaptureOutputStateAssembler,
 )
@@ -150,6 +152,8 @@ __all__ = [
     "cap_size_to_displayed_liquidity",
     "CaptureOutputLiveStateAdapter",
     "CaptureOutputLiveStateConfig",
+    "CaptureOutputDerivedStateView",
+    "CaptureOutputLiveStateCache",
     "CaptureOutputStateAssembler",
     "JsonlFileTail",
     "evaluate_policy_decision",

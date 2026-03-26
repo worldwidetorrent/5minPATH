@@ -65,6 +65,20 @@ Incremental file-tail behavior is also frozen for the capture-output live-state 
 - never block capture
 - fail open on tail-read failures by logging and continuing
 
+The capture-output live-state adapter also maintains one latest-known in-memory state
+surface rather than rebuilding from scratch on each loop. That cache is frozen to:
+- latest Chainlink tick
+- latest exchange quote by venue
+- latest exchange mid by venue
+- latest Polymarket quote by market
+- optional latest metadata row by market
+
+The minimal derived state exposed to execution from that cache is:
+- current oracle tick
+- latest exchange mids by venue
+- latest Polymarket executable book for the selected market
+- quote age relative to the current decision timestamp
+
 The frozen venue-neutral core boundaries live in:
 - [`src/rtds/execution/policy_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/policy_adapter.py)
 - [`src/rtds/execution/sizing.py`](/home/ubuntu/testingproject/src/rtds/execution/sizing.py)
