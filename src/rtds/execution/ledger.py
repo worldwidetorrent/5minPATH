@@ -42,12 +42,25 @@ class LedgerEvent:
 class ShadowLedger:
     """Track shadow decisions, state transitions, and optional reconciled outcomes."""
 
-    def __init__(self, *, session_id: str, policy_mode: PolicyMode) -> None:
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        policy_mode: PolicyMode,
+        shadow_attach_ts: datetime | None = None,
+        processing_mode: str = "live_only_from_attach_ts",
+    ) -> None:
         normalized_session_id = str(session_id).strip()
         if not normalized_session_id:
             raise ValueError("session_id must be non-empty")
         self._session_id = normalized_session_id
         self._policy_mode = PolicyMode(policy_mode)
+        self._shadow_attach_ts = (
+            None
+            if shadow_attach_ts is None
+            else ensure_utc(shadow_attach_ts, field_name="shadow_attach_ts")
+        )
+        self._processing_mode = str(processing_mode).strip().lower()
         self._events: list[LedgerEvent] = []
         self._order_states: list[ShadowOrderState] = []
         self._outcomes: list[ShadowOutcome] = []
@@ -55,6 +68,9 @@ class ShadowLedger:
         self._written_ids: set[str] = set()
         self._reconciled_ids: set[str] = set()
         self._decisions_by_id: dict[str, ShadowDecision] = {}
+        self._backlog_decision_count = 0
+        self._live_forward_decision_count = 0
+        self._max_decision_lag_ms: int | None = None
 
     @property
     def session_id(self) -> str:
@@ -67,6 +83,26 @@ class ShadowLedger:
     @property
     def events(self) -> tuple[LedgerEvent, ...]:
         return tuple(self._events)
+
+    @property
+    def shadow_attach_ts(self) -> datetime | None:
+        return self._shadow_attach_ts
+
+    @property
+    def processing_mode(self) -> str:
+        return self._processing_mode
+
+    @property
+    def backlog_decision_count(self) -> int:
+        return self._backlog_decision_count
+
+    @property
+    def live_forward_decision_count(self) -> int:
+        return self._live_forward_decision_count
+
+    @property
+    def max_decision_lag_ms(self) -> int | None:
+        return self._max_decision_lag_ms
 
     @property
     def decisions(self) -> tuple[ShadowDecision, ...]:
@@ -98,10 +134,23 @@ class ShadowLedger:
     def record_decision_seen(self, decision: ShadowDecision) -> ShadowOrderState:
         """Record that a decision was produced by the decision kernel."""
 
+        self._live_forward_decision_count += 1
         return self._record_transition(
             decision=decision,
             ledger_state=LEDGER_STATE_SEEN,
         )
+
+    def record_backlog_decision(
+        self,
+        *,
+        decision_ts: datetime,
+        decision_lag_ms: int | None = None,
+    ) -> None:
+        """Record one pre-attach state that was intentionally skipped."""
+
+        ensure_utc(decision_ts, field_name="decision_ts")
+        self._backlog_decision_count += 1
+        self._update_max_decision_lag(decision_lag_ms)
 
     def record_decision_written(self, decision: ShadowDecision) -> ShadowOrderState:
         """Record that a decision was durably written to the shadow tree."""
@@ -138,6 +187,9 @@ class ShadowLedger:
         from rtds.execution.summary import build_shadow_summary
 
         return build_shadow_summary(self)
+
+    def update_decision_lag(self, decision_lag_ms: int | None) -> None:
+        self._update_max_decision_lag(decision_lag_ms)
 
     def _record_transition(
         self,
@@ -193,6 +245,14 @@ class ShadowLedger:
         if decision.tradability_check.is_actionable:
             return OrderState.ELIGIBLE_RECORDED
         return OrderState.NO_TRADE_RECORDED
+
+    def _update_max_decision_lag(self, decision_lag_ms: int | None) -> None:
+        if decision_lag_ms is None:
+            return
+        if decision_lag_ms < 0:
+            raise ValueError("decision_lag_ms must be non-negative")
+        if self._max_decision_lag_ms is None or decision_lag_ms > self._max_decision_lag_ms:
+            self._max_decision_lag_ms = decision_lag_ms
 
 
 __all__ = [

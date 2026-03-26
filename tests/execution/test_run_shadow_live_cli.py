@@ -18,6 +18,8 @@ def test_run_shadow_live_cli_processes_fixture_session(tmp_path) -> None:
             str(tmp_path / "artifacts/collect"),
             "--shadow-root",
             str(tmp_path / "artifacts/shadow"),
+            "--shadow-attach-ts",
+            "2026-03-26T00:59:59Z",
             "--idle-sleep-seconds",
             "0",
             "--max-iterations",

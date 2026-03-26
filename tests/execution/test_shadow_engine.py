@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from rtds.execution.enums import NoTradeReason, PolicyMode
@@ -11,6 +12,7 @@ from tests.execution.support import FakeLiveAdapter, build_state_view
 
 
 def _build_engine(tmp_path, adapter: FakeLiveAdapter) -> ShadowEngine:
+    attach_ts = datetime(2026, 3, 26, 0, 0, tzinfo=UTC)
     return ShadowEngine(
         adapter=adapter,
         config=ShadowEngineConfig(
@@ -28,6 +30,7 @@ def _build_engine(tmp_path, adapter: FakeLiveAdapter) -> ShadowEngine:
             heartbeat_interval_seconds=1,
             idle_sleep_seconds=0,
             shadow_root_dir=str(tmp_path / "artifacts/shadow"),
+            shadow_attach_ts=attach_ts,
         ),
     )
 
@@ -60,7 +63,11 @@ def test_shadow_engine_processes_one_live_row_into_one_decision(tmp_path) -> Non
     ]
     assert summary_payload["decision_count"] == 1
     assert summary_payload["actionable_decision_count"] == 1
+    assert summary_payload["processing_mode"] == "live_only_from_attach_ts"
+    assert summary_payload["backlog_decision_count"] == 0
+    assert summary_payload["live_forward_decision_count"] == 1
     assert summary_payload["written_decision_count"] == 1
+    assert summary_payload["max_decision_lag_ms"] is not None
     assert engine.stats.decision_count == 1
 
 
@@ -91,3 +98,38 @@ def test_shadow_engine_run_closes_adapter_and_logs_heartbeat(tmp_path, caplog) -
 
     assert engine.adapter.closed is True
     assert "shadow heartbeat" in caplog.text
+
+
+def test_shadow_engine_skips_pre_attach_backlog_in_live_only_mode(tmp_path) -> None:
+    attach_ts = datetime(2026, 3, 26, 0, 0, 5, tzinfo=UTC)
+    backlog_state = build_state_view(snapshot_ts=attach_ts - timedelta(seconds=1))
+    live_state = build_state_view(snapshot_ts=attach_ts)
+    engine = ShadowEngine(
+        adapter=FakeLiveAdapter([backlog_state, live_state]),
+        config=ShadowEngineConfig(
+            session_id="20260326T000000000Z",
+            policy_name="good_only_baseline",
+            policy_role="baseline",
+            policy_mode=PolicyMode.BASELINE,
+            sizing_policy=SizingPolicy(
+                size_mode=SIZE_MODE_FIXED_CONTRACTS,
+                fixed_size_contracts="10",
+            ),
+            min_net_edge="0.03",
+            max_quote_age_ms=100,
+            max_spread_abs="0.03",
+            heartbeat_interval_seconds=1,
+            idle_sleep_seconds=0,
+            shadow_root_dir=str(tmp_path / "artifacts/shadow"),
+            shadow_attach_ts=attach_ts,
+        ),
+    )
+
+    assert engine.process_next_state() is True
+    assert engine.process_next_state() is True
+
+    summary_path = Path(tmp_path / "artifacts/shadow/20260326T000000000Z/shadow_summary.json")
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary_payload["decision_count"] == 1
+    assert summary_payload["backlog_decision_count"] == 1
+    assert summary_payload["live_forward_decision_count"] == 1

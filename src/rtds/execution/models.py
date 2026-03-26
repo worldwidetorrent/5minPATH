@@ -34,6 +34,7 @@ CALIBRATION_SUPPORT_THIN = "thin"
 CALIBRATION_SUPPORT_MERGE_REQUIRED = "merge_required"
 OUTCOME_STATUS_RESOLVED = "resolved"
 OUTCOME_STATUS_UNRESOLVED = "unresolved"
+PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS = "live_only_from_attach_ts"
 
 
 def _validate_state_source_kind(value: str) -> str:
@@ -76,6 +77,13 @@ def _validate_transition_name(value: str | None) -> str | None:
     normalized = str(value).strip().lower()
     if not normalized:
         raise ValueError("transition_name must be non-empty when provided")
+    return normalized
+
+
+def _validate_processing_mode(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized not in {PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS}:
+        raise ValueError(f"unsupported processing_mode: {value}")
     return normalized
 
 
@@ -639,6 +647,10 @@ class ShadowSummary:
     no_trade_count: int
     order_state_counts: dict[str, int]
     no_trade_reason_counts: dict[str, int]
+    shadow_attach_ts: datetime | None = None
+    processing_mode: str = PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS
+    backlog_decision_count: int = 0
+    live_forward_decision_count: int = 0
     written_decision_count: int = 0
     order_state_transition_count: int = 0
     reject_rate_by_reason: dict[str, Decimal] | None = None
@@ -651,17 +663,27 @@ class ShadowSummary:
     pnl_divergence_vs_replay: Decimal | None = None
     first_decision_ts: datetime | None = None
     last_decision_ts: datetime | None = None
+    max_decision_lag_ms: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "policy_mode", PolicyMode(self.policy_mode))
+        object.__setattr__(self, "processing_mode", _validate_processing_mode(self.processing_mode))
         if (
             self.decision_count < 0
             or self.actionable_decision_count < 0
             or self.no_trade_count < 0
+            or self.backlog_decision_count < 0
+            or self.live_forward_decision_count < 0
             or self.written_decision_count < 0
             or self.order_state_transition_count < 0
         ):
             raise ValueError("summary counts must be non-negative")
+        if self.shadow_attach_ts is not None:
+            object.__setattr__(
+                self,
+                "shadow_attach_ts",
+                ensure_utc(self.shadow_attach_ts, field_name="shadow_attach_ts"),
+            )
         if self.first_decision_ts is not None:
             object.__setattr__(
                 self,
@@ -705,6 +727,8 @@ class ShadowSummary:
                     field_name,
                     to_decimal(value, field_name=field_name),
                 )
+        if self.max_decision_lag_ms is not None and self.max_decision_lag_ms < 0:
+            raise ValueError("max_decision_lag_ms must be non-negative")
 
 
 @dataclass(slots=True, frozen=True)

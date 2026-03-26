@@ -31,6 +31,10 @@ def build_shadow_summary(ledger) -> ShadowSummary:
         actionable_decision_count=actionable_count,
         no_trade_count=no_trade_count,
         written_decision_count=ledger.written_decision_count,
+        shadow_attach_ts=ledger.shadow_attach_ts,
+        processing_mode=ledger.processing_mode,
+        backlog_decision_count=ledger.backlog_decision_count,
+        live_forward_decision_count=ledger.live_forward_decision_count,
         order_state_transition_count=len(ledger.order_states),
         order_state_counts=order_state_counts,
         no_trade_reason_counts=no_trade_reason_counts,
@@ -53,6 +57,7 @@ def build_shadow_summary(ledger) -> ShadowSummary:
         pnl_divergence_vs_replay=divergence_total,
         first_decision_ts=first_ts,
         last_decision_ts=last_ts,
+        max_decision_lag_ms=ledger.max_decision_lag_ms,
     )
 
 

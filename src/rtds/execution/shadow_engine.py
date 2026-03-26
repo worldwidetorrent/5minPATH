@@ -6,6 +6,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Deque
 
@@ -15,6 +16,7 @@ from rtds.execution.adapters import (
 )
 from rtds.execution.enums import PolicyMode
 from rtds.execution.ledger import ShadowLedger
+from rtds.execution.models import PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS
 from rtds.execution.policy_adapter import (
     PolicyDecision,
     PolicyEvaluationInput,
@@ -46,6 +48,8 @@ class ShadowEngineConfig:
     idle_sleep_seconds: float = DEFAULT_IDLE_SLEEP_SECONDS
     recent_decision_buffer_size: int = DEFAULT_RECENT_DECISION_BUFFER_SIZE
     shadow_root_dir: str = "artifacts/shadow"
+    processing_mode: str = PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS
+    shadow_attach_ts: datetime | None = None
 
     def __post_init__(self) -> None:
         if not str(self.session_id).strip():
@@ -56,6 +60,10 @@ class ShadowEngineConfig:
             raise ValueError("idle_sleep_seconds must be non-negative")
         if self.recent_decision_buffer_size <= 0:
             raise ValueError("recent_decision_buffer_size must be positive")
+        normalized_processing_mode = str(self.processing_mode).strip().lower()
+        if normalized_processing_mode != PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS:
+            raise ValueError(f"unsupported processing_mode: {self.processing_mode}")
+        object.__setattr__(self, "processing_mode", normalized_processing_mode)
 
 
 @dataclass(slots=True)
@@ -86,6 +94,11 @@ class ShadowEngine:
     _last_heartbeat_monotonic: float = field(default_factory=time.monotonic, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        attach_ts = (
+            datetime.now(UTC)
+            if self.config.shadow_attach_ts is None
+            else self.config.shadow_attach_ts
+        )
         assert_live_state_adapter(self.adapter.descriptor)
         self.writer = ShadowArtifactWriter(
             session_id=self.config.session_id,
@@ -94,6 +107,8 @@ class ShadowEngine:
         self.ledger = ShadowLedger(
             session_id=self.config.session_id,
             policy_mode=self.config.policy_mode,
+            shadow_attach_ts=attach_ts,
+            processing_mode=self.config.processing_mode,
         )
         self.stats = ShadowEngineStats()
         self._recent_decision_ids = deque(maxlen=self.config.recent_decision_buffer_size)
@@ -146,6 +161,21 @@ class ShadowEngine:
 
         self.stats.read_count += 1
         self.stats.last_state_ts = executable_state.snapshot_ts
+        decision_lag_ms = max(
+            0,
+            int((datetime.now(UTC) - executable_state.snapshot_ts).total_seconds() * 1000),
+        )
+        if (
+            self.config.processing_mode == PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS
+            and self.ledger.shadow_attach_ts is not None
+            and executable_state.snapshot_ts < self.ledger.shadow_attach_ts
+        ):
+            self.ledger.record_backlog_decision(
+                decision_ts=executable_state.snapshot_ts,
+                decision_lag_ms=decision_lag_ms,
+            )
+            self.flush_summary()
+            return True
 
         try:
             policy_decision = evaluate_policy_decision(
@@ -160,7 +190,10 @@ class ShadowEngine:
                     policy_role=self.config.policy_role,
                 )
             )
-            self._record_policy_decision(policy_decision)
+            self._record_policy_decision(
+                policy_decision,
+                decision_lag_ms=decision_lag_ms,
+            )
             self.flush_summary()
             return True
         except Exception:
@@ -177,7 +210,13 @@ class ShadowEngine:
 
         self.writer.write_shadow_summary(self.ledger.build_summary())
 
-    def _record_policy_decision(self, policy_decision: PolicyDecision) -> None:
+    def _record_policy_decision(
+        self,
+        policy_decision: PolicyDecision,
+        *,
+        decision_lag_ms: int | None = None,
+    ) -> None:
+        self.ledger.update_decision_lag(decision_lag_ms)
         seen_state = self.ledger.record_decision_seen(policy_decision.shadow_decision)
         self.writer.append_shadow_order_state(seen_state)
         self.writer.append_shadow_decision(policy_decision.shadow_decision)
@@ -207,13 +246,16 @@ class ShadowEngine:
             return
         logger.info(
             "shadow heartbeat session=%s reads=%s decisions=%s actionable=%s "
-            "no_trade=%s errors=%s last_state_ts=%s last_decision_id=%s "
+            "no_trade=%s backlog=%s live_forward=%s errors=%s "
+            "last_state_ts=%s last_decision_id=%s "
             "last_no_trade_reason=%s buffer_size=%s",
             self.config.session_id,
             self.stats.read_count,
             self.stats.decision_count,
             self.stats.actionable_count,
             self.stats.no_trade_count,
+            self.ledger.backlog_decision_count,
+            self.ledger.live_forward_decision_count,
             self.stats.error_count,
             self.stats.last_state_ts,
             self.stats.last_decision_id,

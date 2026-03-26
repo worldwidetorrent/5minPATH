@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -12,6 +13,7 @@ from rtds.execution.capture_output_live_state_adapter import (
     CaptureOutputLiveStateConfig,
 )
 from rtds.execution.enums import PolicyMode
+from rtds.execution.models import PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS
 from rtds.execution.shadow_engine import ShadowEngine, ShadowEngineConfig
 from rtds.execution.sizing import (
     SIZE_MODE_FIXED_CONTRACTS,
@@ -58,6 +60,8 @@ def run_shadow_live(args: argparse.Namespace) -> Path:
             heartbeat_interval_seconds=args.heartbeat_interval_seconds,
             idle_sleep_seconds=args.idle_sleep_seconds,
             shadow_root_dir=args.shadow_root,
+            processing_mode=args.processing_mode,
+            shadow_attach_ts=_parse_optional_utc_datetime(args.shadow_attach_ts),
         ),
     )
     LOGGER.info(
@@ -78,6 +82,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--normalized-root", default="data/normalized")
     parser.add_argument("--artifacts-root", default="artifacts/collect")
     parser.add_argument("--shadow-root", default="artifacts/shadow")
+    parser.add_argument(
+        "--processing-mode",
+        default=PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS,
+        choices=(PROCESSING_MODE_LIVE_ONLY_FROM_ATTACH_TS,),
+    )
+    parser.add_argument("--shadow-attach-ts")
     parser.add_argument("--policy-name", default="good_only_baseline")
     parser.add_argument("--policy-role", default="baseline")
     parser.add_argument(
@@ -125,6 +135,17 @@ def _configure_logging(*, level: str) -> None:
         level=getattr(logging, level.upper()),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+
+def _parse_optional_utc_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    return datetime.fromisoformat(normalized)
 
 
 if __name__ == "__main__":
