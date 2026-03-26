@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+from decimal import Decimal
+
+from rtds.core.time import parse_utc
+from rtds.execution.state_assembler import CaptureOutputStateAssembler
+
+
+def test_state_assembler_builds_deterministic_executable_state() -> None:
+    assembler = CaptureOutputStateAssembler(session_id="20260326T010000000Z")
+    assembler.ingest_chainlink_row(
+        {
+            "event_id": "chain-1",
+            "event_ts": "2026-03-26T01:00:04Z",
+            "price": "70000",
+            "recv_ts": "2026-03-26T01:00:05Z",
+            "oracle_source": "chainlink_stream_public_delayed",
+            "oracle_feed_id": "chainlink:stream:BTC-USD",
+            "round_id": None,
+            "bid_price": "69999",
+            "ask_price": "70001",
+        }
+    )
+    for venue_id, instrument_id, mid_price in (
+        ("binance", "binance:spot:BTCUSDT", "70500.0"),
+        ("coinbase", "coinbase:spot:BTC-USD", "70510.0"),
+        ("kraken", "kraken:spot:BTC-USD", "70520.0"),
+    ):
+        assembler.ingest_exchange_row(
+            {
+                "venue_id": venue_id,
+                "instrument_id": instrument_id,
+                "asset_id": "BTC",
+                "event_ts": "2026-03-26T01:00:05Z",
+                "recv_ts": "2026-03-26T01:00:05Z",
+                "proc_ts": "2026-03-26T01:00:05Z",
+                "best_bid": f"{float(mid_price) - 5:.2f}",
+                "best_ask": f"{float(mid_price) + 5:.2f}",
+                "mid_price": f"{float(mid_price):.2f}",
+                "bid_size": "1.0",
+                "ask_size": "1.0",
+                "raw_event_id": f"raw-{venue_id}",
+                "normalizer_version": "0.1.0",
+                "schema_version": "0.1.0",
+                "created_ts": "2026-03-26T01:00:05Z",
+                "quote_type": "book",
+                "quote_depth_level": 1,
+                "sequence_id": f"{venue_id}-1",
+                "source_event_missing_ts_flag": False,
+                "crossed_market_flag": False,
+                "locked_market_flag": False,
+                "normalization_status": "normalized",
+            }
+        )
+    assembler.ingest_polymarket_row(
+        {
+            "venue_id": "polymarket",
+            "market_id": "0xmarket",
+            "asset_id": "BTC",
+            "event_ts": "2026-03-26T01:00:05Z",
+            "recv_ts": "2026-03-26T01:00:05Z",
+            "proc_ts": "2026-03-26T01:00:05Z",
+            "up_bid": "0.58",
+            "up_ask": "0.60",
+            "down_bid": "0.40",
+            "down_ask": "0.42",
+            "up_bid_size_contracts": "50",
+            "up_ask_size_contracts": "40",
+            "down_bid_size_contracts": "50",
+            "down_ask_size_contracts": "40",
+            "raw_event_id": "rawpoly:1",
+            "normalizer_version": "0.1.0",
+            "schema_version": "0.1.0",
+            "created_ts": "2026-03-26T01:00:05Z",
+            "token_yes_id": "up-token",
+            "token_no_id": "down-token",
+            "market_quote_type": "orderbook_top",
+            "quote_sequence_id": "seq-1",
+            "market_mid_up": "0.59",
+            "market_mid_down": "0.41",
+            "market_spread_up_abs": "0.02",
+            "market_spread_down_abs": "0.02",
+            "last_trade_price": None,
+            "last_trade_size_contracts": None,
+            "last_trade_side": None,
+            "last_trade_outcome": None,
+            "source_event_missing_ts_flag": False,
+            "crossed_market_flag": False,
+            "locked_market_flag": False,
+            "quote_completeness_flag": True,
+            "normalization_status": "normalized",
+        }
+    )
+
+    sample_row = {
+        "sample_index": 1,
+        "sample_started_at": "2026-03-26T01:00:05.000Z",
+        "sample_status": "healthy",
+        "degraded_sources": [],
+        "selected_market_id": "0xmarket",
+        "selected_market_slug": "btc-updown-5m-1770000600",
+        "selected_window_id": "btc-5m-20260326T010000Z",
+        "source_results": {
+            "chainlink": {"status": "success", "details": {"fallback_used": False}},
+            "polymarket_quotes": {"status": "success", "details": {"seconds_remaining": 295}},
+        },
+    }
+
+    first_state = assembler.build_state(sample_row)
+    second_state = assembler.build_state(sample_row)
+
+    assert first_state is not None
+    assert second_state is not None
+    assert first_state.snapshot_ts == parse_utc("2026-03-26T01:00:05.000Z")
+    assert first_state.window_id == "btc-5m-20260326T010000Z"
+    assert first_state.window_start_ts == parse_utc("2026-03-26T01:00:00Z")
+    assert first_state.window_end_ts == parse_utc("2026-03-26T01:05:00Z")
+    assert first_state.seconds_remaining == 295
+    assert first_state.polymarket_market_id == "0xmarket"
+    assert first_state.polymarket_slug == "btc-updown-5m-1770000600"
+    assert first_state.quote_source == "polymarket"
+    assert first_state.quote_event_ts == parse_utc("2026-03-26T01:00:05Z")
+    assert first_state.quote_recv_ts == parse_utc("2026-03-26T01:00:05Z")
+    assert first_state.quote_age_ms == 0
+    assert first_state.up_bid_price == Decimal("0.58")
+    assert first_state.up_ask_price == Decimal("0.60")
+    assert first_state.down_bid_price == Decimal("0.40")
+    assert first_state.down_ask_price == Decimal("0.42")
+    assert first_state.up_bid_size_contracts == Decimal("50")
+    assert first_state.up_ask_size_contracts == Decimal("40")
+    assert first_state.down_bid_size_contracts == Decimal("50")
+    assert first_state.down_ask_size_contracts == Decimal("40")
+    assert first_state.up_spread_abs == Decimal("0.02")
+    assert first_state.down_spread_abs == Decimal("0.02")
+    assert first_state.market_actionable_flag is True
+    assert first_state.state_fingerprint == second_state.state_fingerprint
+
+
+def test_state_assembler_falls_back_to_window_helper_for_seconds_remaining() -> None:
+    assembler = CaptureOutputStateAssembler(session_id="20260326T010000000Z")
+    assembler.ingest_polymarket_row(
+        {
+            "venue_id": "polymarket",
+            "market_id": "0xmarket",
+            "asset_id": "BTC",
+            "event_ts": "2026-03-26T01:01:00Z",
+            "recv_ts": "2026-03-26T01:01:01Z",
+            "proc_ts": "2026-03-26T01:01:01Z",
+            "up_bid": "0.58",
+            "up_ask": "0.60",
+            "down_bid": "0.40",
+            "down_ask": "0.42",
+            "up_bid_size_contracts": "50",
+            "up_ask_size_contracts": "40",
+            "down_bid_size_contracts": "50",
+            "down_ask_size_contracts": "40",
+            "raw_event_id": "rawpoly:1",
+            "normalizer_version": "0.1.0",
+            "schema_version": "0.1.0",
+            "created_ts": "2026-03-26T01:01:01Z",
+            "token_yes_id": "up-token",
+            "token_no_id": "down-token",
+            "market_quote_type": "orderbook_top",
+            "quote_sequence_id": "seq-1",
+            "market_mid_up": "0.59",
+            "market_mid_down": "0.41",
+            "market_spread_up_abs": "0.02",
+            "market_spread_down_abs": "0.02",
+            "last_trade_price": None,
+            "last_trade_size_contracts": None,
+            "last_trade_side": None,
+            "last_trade_outcome": None,
+            "source_event_missing_ts_flag": False,
+            "crossed_market_flag": False,
+            "locked_market_flag": False,
+            "quote_completeness_flag": True,
+            "normalization_status": "normalized",
+        }
+    )
+
+    state = assembler.build_state(
+        {
+            "sample_started_at": "2026-03-26T01:01:40.000Z",
+            "sample_status": "healthy",
+            "degraded_sources": [],
+            "selected_market_id": "0xmarket",
+            "selected_market_slug": "btc-updown-5m-1770000600",
+            "selected_window_id": "btc-5m-20260326T010000Z",
+            "source_results": {
+                "chainlink": {"status": "success", "details": {"fallback_used": False}},
+                "polymarket_quotes": {"status": "success", "details": {}},
+            },
+        }
+    )
+
+    assert state is not None
+    assert state.seconds_remaining == 200

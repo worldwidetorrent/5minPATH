@@ -44,6 +44,7 @@ The older schema layer remains in:
 The frozen adapter split lives in:
 - [`src/rtds/execution/adapters.py`](/home/ubuntu/testingproject/src/rtds/execution/adapters.py)
 - [`src/rtds/execution/capture_output_live_state_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/capture_output_live_state_adapter.py) is the current production-safe `live_state` implementation over session-scoped normalized capture outputs
+- [`src/rtds/execution/state_assembler.py`](/home/ubuntu/testingproject/src/rtds/execution/state_assembler.py) is the dedicated live execution-state transformation layer from normalized capture rows into `ExecutableStateView`
 
 The frozen v0 live-state input surfaces are:
 - required normalized datasets:
@@ -78,6 +79,12 @@ The minimal derived state exposed to execution from that cache is:
 - latest exchange mids by venue
 - latest Polymarket executable book for the selected market
 - quote age relative to the current decision timestamp
+
+The executable-state assembly contract is also frozen:
+- `snapshot_ts` is the sample timestamp from capture
+- `window_start_ts`, `window_end_ts`, and `seconds_remaining` are derived with the repo UTC/window helpers
+- the assembler must emit one coherent `ExecutableStateView` from current live normalized inputs
+- this path must not invent replay snapshots or rebuild replay-style datasets
 
 The frozen venue-neutral core boundaries live in:
 - [`src/rtds/execution/policy_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/policy_adapter.py)

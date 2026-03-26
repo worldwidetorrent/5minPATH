@@ -14,6 +14,8 @@ Adapter split is fixed:
 - `replay_tail` adapters are non-production and exist only for smoke tests, replay, and debugging
 - the concrete production adapter currently tails session-scoped capture outputs via
   [`capture_output_live_state_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/capture_output_live_state_adapter.py)
+  and delegates the deterministic live-state transformation into
+  [`state_assembler.py`](/home/ubuntu/testingproject/src/rtds/execution/state_assembler.py)
 
 Core execution consumes normalized internal state from:
 - [`enums.py`](/home/ubuntu/testingproject/src/rtds/execution/enums.py)
@@ -75,7 +77,8 @@ Current live-state ingestion path:
   - `exchange_quotes`
   - `polymarket_quotes`
 - use `market_metadata_events` only as a secondary fallback for token IDs or stable market context if those fields are missing from the primary quote rows
-- assemble one in-memory `ExecutableStateView` per sample timestamp
+- assemble one coherent `ExecutableStateView` per sample timestamp in
+  [`state_assembler.py`](/home/ubuntu/testingproject/src/rtds/execution/state_assembler.py)
 - incremental file tailing is handled by [`file_tail.py`](/home/ubuntu/testingproject/src/rtds/execution/file_tail.py)
   and is frozen to:
   - discover new JSONL files during runtime

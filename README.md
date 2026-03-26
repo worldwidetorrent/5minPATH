@@ -44,7 +44,7 @@ Not yet implemented end to end:
 
 - dedicated `build_snapshots` CLI is still a placeholder
 - raw event schemas are still conceptual rather than fully implemented in code
-- live shadow execution runtime is not implemented end to end; a minimal fail-open engine loop and shadow artifact writer exist, but there is still no production live-state adapter implementation or authenticated execution path
+- live shadow execution runtime is not implemented end to end; a minimal fail-open engine loop, production capture-output `live_state` adapter, and shadow artifact writer exist, but there is still no websocket market-data path or authenticated execution path
 - the full intended streaming collector fleet is not implemented; the current capture path is a bounded public-endpoint snapshot session rather than a continuously running service
 - most downstream admission and replay logic still expects curated day partitions rather than a continuously running ingestion service
 
