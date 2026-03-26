@@ -187,6 +187,20 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
     def state_cache(self) -> CaptureOutputLiveStateCache:
         return self._assembler.state_cache
 
+    def consume_soft_error_count(self) -> int:
+        """Return and reset fail-open tail/read errors seen by the adapter."""
+
+        return sum(
+            tail.consume_error_count()
+            for tail in (
+                self._sample_tailer,
+                self._chainlink_tailer,
+                self._exchange_tailer,
+                self._polymarket_tailer,
+                self._metadata_tailer,
+            )
+        )
+
     def _refresh_tails(self) -> None:
         for row in self._chainlink_tailer.read_new_rows():
             self._assembler.ingest_chainlink_row(row)

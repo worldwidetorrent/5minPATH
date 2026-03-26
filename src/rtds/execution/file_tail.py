@@ -25,6 +25,7 @@ class JsonlFileTail:
 
     pattern: str
     _offsets: dict[Path, int] = field(default_factory=dict)
+    _error_count: int = 0
 
     def read_new_rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -60,6 +61,7 @@ class JsonlFileTail:
         except FileNotFoundError:
             return rows
         except Exception as exc:  # pragma: no cover - exact failure types vary by runtime
+            self._error_count += 1
             logger.warning(
                 "execution file tail read failed",
                 extra={
@@ -70,6 +72,13 @@ class JsonlFileTail:
             )
             self._offsets[path] = offset
         return rows
+
+    def consume_error_count(self) -> int:
+        """Return and reset the number of fail-open read errors seen so far."""
+
+        count = self._error_count
+        self._error_count = 0
+        return count
 
 
 __all__ = ["JsonlFileTail"]

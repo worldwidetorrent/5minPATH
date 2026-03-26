@@ -133,12 +133,14 @@ class ShadowEngine:
         """Process one state if available, isolating all shadow-side exceptions."""
 
         active_logger = logger or LOGGER
+        self._record_adapter_soft_errors(active_logger)
         try:
             executable_state = self.adapter.read_state()
         except Exception:
             self.stats.error_count += 1
             active_logger.exception("shadow adapter read failed")
             return False
+        self._record_adapter_soft_errors(active_logger)
         if executable_state is None:
             return False
 
@@ -219,6 +221,25 @@ class ShadowEngine:
             len(self._recent_decision_ids),
         )
         self._last_heartbeat_monotonic = now_monotonic
+
+    def _record_adapter_soft_errors(self, logger: logging.Logger) -> None:
+        consume = getattr(self.adapter, "consume_soft_error_count", None)
+        if consume is None:
+            return
+        try:
+            soft_errors = int(consume())
+        except Exception:
+            self.stats.error_count += 1
+            logger.exception("shadow adapter soft-error inspection failed")
+            return
+        if soft_errors <= 0:
+            return
+        self.stats.error_count += soft_errors
+        logger.warning(
+            "shadow adapter soft errors session=%s count=%s",
+            self.config.session_id,
+            soft_errors,
+        )
 
 
 __all__ = [

@@ -431,6 +431,30 @@ def test_capture_output_adapter_skips_non_success_and_partial_polymarket_rows(tm
     assert adapter.read_state() is not None
 
 
+def test_capture_output_adapter_reports_soft_tail_errors(tmp_path, caplog) -> None:
+    session_id = "20260326T010000000Z"
+    _write_fixture_session(tmp_path, session_id=session_id)
+    bad_path = (
+        tmp_path
+        / f"data/normalized/polymarket_quotes/date=2026-03-27/session={session_id}/part-00000.jsonl"
+    )
+    _append_lines(bad_path, ["not-json\n"])
+    adapter = CaptureOutputLiveStateAdapter(
+        CaptureOutputLiveStateConfig(
+            session_id=session_id,
+            normalized_root=tmp_path / "data/normalized",
+            artifacts_root=tmp_path / "artifacts/collect",
+        )
+    )
+
+    with caplog.at_level("WARNING"):
+        state = adapter.read_state()
+
+    assert state is not None
+    assert adapter.consume_soft_error_count() == 1
+    assert adapter.consume_soft_error_count() == 0
+
+
 def _write_fixture_session(
     tmp_path: Path,
     *,
@@ -603,6 +627,13 @@ def _append_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         for row in rows:
             handle.write(json.dumps(row) + "\n")
+
+
+def _append_lines(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        for line in lines:
+            handle.write(line)
 
 
 def _decimal(value: str) -> Decimal:
