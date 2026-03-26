@@ -56,6 +56,7 @@ POLICY_STACK_RUN_DIR="$(latest_run_dir "$POLICY_STACK_SESSION_ROOT")"
 POLICY_STACK_SUMMARY="${POLICY_STACK_RUN_DIR}/policy_stack_summary.json"
 echo "waiting for policy stack summary: ${POLICY_STACK_SUMMARY}"
 wait_for_file "$POLICY_STACK_SUMMARY"
+ln -sfn "$(basename "$POLICY_STACK_RUN_DIR")" "${POLICY_STACK_SESSION_ROOT}/run_latest"
 
 echo "running calibrated baseline replay"
 python3 -m rtds.cli.compare_calibrated_baseline --manifest "$CALIBRATED_MANIFEST"

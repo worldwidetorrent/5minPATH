@@ -1,6 +1,6 @@
 {
   "analysis_id": "policy-v1-cross-horizon",
-  "description": "Pinned cross-horizon comparison for the policy-v1 stack using the 6-hour, 12-hour, 20-hour, validation 24-hour, and Day 1 24-hour block capture baselines under one fixed replay contract.",
+  "description": "Pinned cross-horizon comparison for the policy-v1 stack using the 6-hour, 12-hour, 20-hour, validation 24-hour, Day 1 24-hour block, and Day 2 24-hour block capture baselines under one fixed replay contract.",
   "comparison_config_path": "configs/replay/task7_reference_comparison.yaml",
   "stack_order": [
     "baseline_only",
@@ -67,6 +67,16 @@
       "summary_path": "artifacts/collect/date=2026-03-24/session=20260324T040815584Z/summary.json",
       "admission_summary_path": "artifacts/collect/date=2026-03-24/session=20260324T040815584Z/admission_summary.json",
       "policy_stack_summary_path": "artifacts/replay_policy_stack/2026-03-24/session_20260324T040815584Z/run_20260325T052355Z/policy_stack_summary.json"
+    },
+    {
+      "label": "block_day2_24h",
+      "session_id": "20260325T052115572Z",
+      "capture_date": "2026-03-25",
+      "baseline_manifest_path": "configs/baselines/capture/20260325T052115572Z.json",
+      "baseline_note_path": "docs/baselines/20260325T052115572Z.md",
+      "summary_path": "artifacts/collect/date=2026-03-25/session=20260325T052115572Z/summary.json",
+      "admission_summary_path": "artifacts/collect/date=2026-03-25/session=20260325T052115572Z/admission_summary.json",
+      "policy_stack_summary_path": "artifacts/replay_policy_stack/2026-03-25/session_20260325T052115572Z/run_latest/policy_stack_summary.json"
     }
   ]
 }
