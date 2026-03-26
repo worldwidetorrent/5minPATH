@@ -136,7 +136,13 @@ class ExecutableStateView:
     exchange_rejected_venue_count: int = 0
     exchange_present_by_venue: dict[str, bool] | None = None
     exchange_event_ts_by_venue: dict[str, datetime | None] | None = None
+    exchange_recv_ts_by_venue: dict[str, datetime | None] | None = None
+    exchange_event_age_ms_by_venue: dict[str, int | None] | None = None
+    exchange_recv_age_ms_by_venue: dict[str, int | None] | None = None
     exchange_mid_price_by_venue: dict[str, Decimal | None] | None = None
+    exchange_normalization_status_by_venue: dict[str, str | None] | None = None
+    exchange_quote_valid_for_composite_by_venue: dict[str, bool] | None = None
+    exchange_quote_invalid_reason_by_venue: dict[str, str | None] | None = None
     exchange_eligible_by_venue: dict[str, bool] | None = None
     exchange_ineligible_reason_by_venue: dict[str, str | None] | None = None
     open_anchor_present: bool = False
@@ -212,6 +218,51 @@ class ExecutableStateView:
         )
         object.__setattr__(
             self,
+            "exchange_recv_ts_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if recv_ts is None
+                    else ensure_utc(
+                        recv_ts,
+                        field_name=f"exchange_recv_ts_by_venue[{venue_id}]",
+                    )
+                )
+                for venue_id, recv_ts in sorted(
+                    (self.exchange_recv_ts_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_event_age_ms_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if age_ms is None
+                    else int(age_ms)
+                )
+                for venue_id, age_ms in sorted(
+                    (self.exchange_event_age_ms_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_recv_age_ms_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if age_ms is None
+                    else int(age_ms)
+                )
+                for venue_id, age_ms in sorted(
+                    (self.exchange_recv_age_ms_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
             "exchange_mid_price_by_venue",
             {
                 str(venue_id): (
@@ -224,6 +275,44 @@ class ExecutableStateView:
                 )
                 for venue_id, mid_price in sorted(
                     (self.exchange_mid_price_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_normalization_status_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if status is None
+                    else str(status).strip().lower() or None
+                )
+                for venue_id, status in sorted(
+                    (self.exchange_normalization_status_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_quote_valid_for_composite_by_venue",
+            {
+                str(venue_id): bool(valid)
+                for venue_id, valid in sorted(
+                    (self.exchange_quote_valid_for_composite_by_venue or {}).items()
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "exchange_quote_invalid_reason_by_venue",
+            {
+                str(venue_id): (
+                    None
+                    if reason is None
+                    else str(reason).strip().lower() or None
+                )
+                for venue_id, reason in sorted(
+                    (self.exchange_quote_invalid_reason_by_venue or {}).items()
                 )
             },
         )

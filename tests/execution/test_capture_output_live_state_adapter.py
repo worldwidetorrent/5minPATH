@@ -65,6 +65,16 @@ def test_capture_output_adapter_builds_executable_state_from_session_outputs(tmp
         "coinbase": True,
         "kraken": True,
     }
+    assert dict(state.exchange_quote_valid_for_composite_by_venue) == {
+        "binance": True,
+        "coinbase": True,
+        "kraken": True,
+    }
+    assert dict(state.exchange_quote_invalid_reason_by_venue) == {
+        "binance": None,
+        "coinbase": None,
+        "kraken": None,
+    }
     assert state.up_ask_price is not None
     assert adapter.state_cache.latest_chainlink_tick is not None
     assert adapter.state_cache.latest_exchange_mid_by_venue == {

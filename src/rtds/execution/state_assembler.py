@@ -319,7 +319,19 @@ class CaptureOutputStateAssembler:
             exchange_rejected_venue_count=exchange_rejected_venue_count,
             exchange_present_by_venue=exchange_diagnostics.present_by_venue,
             exchange_event_ts_by_venue=exchange_diagnostics.event_ts_by_venue,
+            exchange_recv_ts_by_venue=exchange_diagnostics.recv_ts_by_venue,
+            exchange_event_age_ms_by_venue=exchange_diagnostics.event_age_ms_by_venue,
+            exchange_recv_age_ms_by_venue=exchange_diagnostics.recv_age_ms_by_venue,
             exchange_mid_price_by_venue=exchange_diagnostics.mid_price_by_venue,
+            exchange_normalization_status_by_venue=(
+                exchange_diagnostics.normalization_status_by_venue
+            ),
+            exchange_quote_valid_for_composite_by_venue=(
+                exchange_diagnostics.quote_valid_for_composite_by_venue
+            ),
+            exchange_quote_invalid_reason_by_venue=(
+                exchange_diagnostics.quote_invalid_reason_by_venue
+            ),
             exchange_eligible_by_venue=exchange_diagnostics.eligible_by_venue,
             exchange_ineligible_reason_by_venue=exchange_diagnostics.ineligible_reason_by_venue,
             open_anchor_present=open_anchor_present,
@@ -427,7 +439,13 @@ def _max_exchange_event_ts(exchange_by_venue: dict[str, ExchangeQuote]) -> datet
 class ExchangeVenueDiagnostics:
     present_by_venue: dict[str, bool]
     event_ts_by_venue: dict[str, datetime | None]
+    recv_ts_by_venue: dict[str, datetime | None]
+    event_age_ms_by_venue: dict[str, int | None]
+    recv_age_ms_by_venue: dict[str, int | None]
     mid_price_by_venue: dict[str, Decimal | None]
+    normalization_status_by_venue: dict[str, str | None]
+    quote_valid_for_composite_by_venue: dict[str, bool]
+    quote_invalid_reason_by_venue: dict[str, str | None]
     eligible_by_venue: dict[str, bool]
     ineligible_reason_by_venue: dict[str, str | None]
 
@@ -451,7 +469,13 @@ def _build_exchange_venue_diagnostics(
 
     present_by_venue: dict[str, bool] = {}
     event_ts_by_venue: dict[str, datetime | None] = {}
+    recv_ts_by_venue: dict[str, datetime | None] = {}
+    event_age_ms_by_venue: dict[str, int | None] = {}
+    recv_age_ms_by_venue: dict[str, int | None] = {}
     mid_price_by_venue: dict[str, Decimal | None] = {}
+    normalization_status_by_venue: dict[str, str | None] = {}
+    quote_valid_for_composite_by_venue: dict[str, bool] = {}
+    quote_invalid_reason_by_venue: dict[str, str | None] = {}
     eligible_by_venue: dict[str, bool] = {}
     ineligible_reason_by_venue: dict[str, str | None] = {}
 
@@ -460,14 +484,42 @@ def _build_exchange_venue_diagnostics(
         quote = exchange_by_venue.get(venue_id)
         present_by_venue[venue_id] = quote is not None
         event_ts_by_venue[venue_id] = None if quote is None else quote.event_ts
+        recv_ts_by_venue[venue_id] = None if quote is None else quote.recv_ts
         mid_price_by_venue[venue_id] = None if quote is None else quote.mid_price
+        normalization_status_by_venue[venue_id] = (
+            None if quote is None else str(quote.normalization_status)
+        )
         if quote is None:
+            event_age_ms_by_venue[venue_id] = None
+            recv_age_ms_by_venue[venue_id] = None
+            quote_valid_for_composite_by_venue[venue_id] = False
+            quote_invalid_reason_by_venue[venue_id] = "missing_from_cache"
             eligible_by_venue[venue_id] = False
             ineligible_reason_by_venue[venue_id] = "missing_from_cache"
             continue
+        event_age_ms_by_venue[venue_id] = (
+            None if quote.event_ts > decision_ts else int(age_ms(decision_ts, quote.event_ts))
+        )
+        recv_age_ms_by_venue[venue_id] = (
+            None if quote.recv_ts > decision_ts else int(age_ms(decision_ts, quote.recv_ts))
+        )
         if quote.event_ts > decision_ts:
+            quote_valid_for_composite_by_venue[venue_id] = False
+            quote_invalid_reason_by_venue[venue_id] = "future_source_ts"
             eligible_by_venue[venue_id] = False
             ineligible_reason_by_venue[venue_id] = "future_source_ts"
+            continue
+        if quote.crossed_market_flag:
+            quote_valid_for_composite_by_venue[venue_id] = False
+            quote_invalid_reason_by_venue[venue_id] = "crossed_market"
+            eligible_by_venue[venue_id] = False
+            ineligible_reason_by_venue[venue_id] = "crossed_market"
+            continue
+        if str(quote.normalization_status).strip().lower() != "normalized":
+            quote_valid_for_composite_by_venue[venue_id] = False
+            quote_invalid_reason_by_venue[venue_id] = "normalization_status_excluded"
+            eligible_by_venue[venue_id] = False
+            ineligible_reason_by_venue[venue_id] = "normalization_status_excluded"
             continue
 
         freshness = assess_source_freshness(
@@ -476,6 +528,8 @@ def _build_exchange_venue_diagnostics(
             last_event_ts=quote.event_ts,
         )
         if not freshness.usable_flag:
+            quote_valid_for_composite_by_venue[venue_id] = True
+            quote_invalid_reason_by_venue[venue_id] = None
             eligible_by_venue[venue_id] = False
             if freshness.missing_flag:
                 ineligible_reason_by_venue[venue_id] = "missing_source"
@@ -485,6 +539,8 @@ def _build_exchange_venue_diagnostics(
                 ineligible_reason_by_venue[venue_id] = "freshness_unusable"
             continue
 
+        quote_valid_for_composite_by_venue[venue_id] = True
+        quote_invalid_reason_by_venue[venue_id] = None
         if venue_id in outlier_ids:
             eligible_by_venue[venue_id] = False
             ineligible_reason_by_venue[venue_id] = "outlier_rejected"
@@ -498,7 +554,13 @@ def _build_exchange_venue_diagnostics(
     return ExchangeVenueDiagnostics(
         present_by_venue=present_by_venue,
         event_ts_by_venue=event_ts_by_venue,
+        recv_ts_by_venue=recv_ts_by_venue,
+        event_age_ms_by_venue=event_age_ms_by_venue,
+        recv_age_ms_by_venue=recv_age_ms_by_venue,
         mid_price_by_venue=mid_price_by_venue,
+        normalization_status_by_venue=normalization_status_by_venue,
+        quote_valid_for_composite_by_venue=quote_valid_for_composite_by_venue,
+        quote_invalid_reason_by_venue=quote_invalid_reason_by_venue,
         eligible_by_venue=eligible_by_venue,
         ineligible_reason_by_venue=ineligible_reason_by_venue,
     )

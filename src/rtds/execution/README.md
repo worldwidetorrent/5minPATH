@@ -107,6 +107,20 @@ Minimal derived state for one decision timestamp:
 - latest Polymarket executable book for the selected market
 - quote age relative to the decision timestamp
 
+Live composite diagnostics now distinguish:
+- venue present in cache
+- venue quote valid for composite input
+- venue eligible after freshness and dispersion checks
+- per-venue `event_ts`, `recv_ts`, `event_age_ms`, and `recv_age_ms`
+- per-venue normalization status and invalid/ineligible reason
+
+This is intentionally stricter than simple presence. A venue can be present in the
+live cache but still be excluded from composite construction because of:
+- non-`normalized` status
+- crossed-market state
+- stale event timestamp
+- outlier rejection
+
 Input-surface freeze for v0:
 - no second truth source beyond those normalized session-scoped capture outputs
 - price, spread, size, freshness, and timing come only from the three primary datasets above
