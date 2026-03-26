@@ -9,7 +9,7 @@ current decision timestamp.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -28,7 +28,11 @@ from rtds.features.volatility import (
 )
 from rtds.mapping.anchor_assignment import ChainlinkTick
 from rtds.quality.dispersion import assess_exchange_composite_quality
-from rtds.quality.freshness import assess_source_freshness
+from rtds.quality.freshness import (
+    DEFAULT_FRESHNESS_POLICY,
+    FreshnessPolicy,
+    assess_source_freshness,
+)
 from rtds.replay.calibrated_baseline import (
     FrozenCalibrationRuntime,
     apply_frozen_stage1_calibration,
@@ -38,6 +42,16 @@ from rtds.schemas.normalized import (
     SUPPORTED_EXCHANGE_QUOTE_VENUES,
     ExchangeQuote,
     PolymarketQuote,
+)
+
+SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY = FreshnessPolicy(
+    stale_after_ms=DEFAULT_FRESHNESS_POLICY.stale_after_ms,
+    missing_after_ms=DEFAULT_FRESHNESS_POLICY.missing_after_ms,
+)
+SHADOW_LIVE_MINIMUM_VENUE_COUNT = 3
+SHADOW_LIVE_EVENT_AGE_HARD_CAP_MS = SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY.missing_after_ms
+SHADOW_LIVE_ALLOWED_NORMALIZATION_STATUSES = frozenset(
+    {"normalized", "normalized_with_missing_event_ts"}
 )
 
 
@@ -346,11 +360,26 @@ class CaptureOutputStateAssembler:
         )
 
     def _build_composite_nowcast(self, sample_ts: datetime) -> CompositeNowcast | None:
-        quotes = list(self.state_cache.latest_exchange_by_venue.values())
-        if not quotes:
+        adapted_quotes = [
+            eligibility.adapted_quote
+            for eligibility in (
+                _shadow_live_composite_quote_eligibility(
+                    quote,
+                    decision_ts=sample_ts,
+                )
+                for quote in self.state_cache.latest_exchange_by_venue.values()
+            )
+            if eligibility.adapted_quote is not None
+        ]
+        if not adapted_quotes:
             return None
         try:
-            return compute_composite_nowcast(quotes, as_of_ts=sample_ts)
+            return compute_composite_nowcast(
+                adapted_quotes,
+                as_of_ts=sample_ts,
+                freshness_policy=SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY,
+                minimum_venue_count=SHADOW_LIVE_MINIMUM_VENUE_COUNT,
+            )
         except Exception:
             return None
 
@@ -450,19 +479,35 @@ class ExchangeVenueDiagnostics:
     ineligible_reason_by_venue: dict[str, str | None]
 
 
+@dataclass(slots=True, frozen=True)
+class ShadowLiveCompositeQuoteEligibility:
+    adapted_quote: ExchangeQuote | None
+    quote_valid_for_composite: bool
+    quote_invalid_reason: str | None
+    eligibility_reason: str | None
+
+
 def _build_exchange_venue_diagnostics(
     exchange_by_venue: dict[str, ExchangeQuote],
     *,
     decision_ts: datetime,
 ) -> ExchangeVenueDiagnostics:
-    eligible_quotes = {
-        venue_id: quote
+    composite_quote_eligibility = {
+        venue_id: _shadow_live_composite_quote_eligibility(
+            quote,
+            decision_ts=decision_ts,
+        )
         for venue_id, quote in exchange_by_venue.items()
-        if quote.event_ts <= decision_ts
+    }
+    eligible_quotes = {
+        venue_id: eligibility.adapted_quote
+        for venue_id, eligibility in composite_quote_eligibility.items()
+        if eligibility.adapted_quote is not None
     }
     quality_state = assess_exchange_composite_quality(
         eligible_quotes.values(),
         as_of_ts=decision_ts,
+        freshness_policy=SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY,
     )
     outlier_ids = set(quality_state.outlier_venue_ids)
     trusted_ids = set(quality_state.trusted_venue_ids)
@@ -503,44 +548,13 @@ def _build_exchange_venue_diagnostics(
         recv_age_ms_by_venue[venue_id] = (
             None if quote.recv_ts > decision_ts else int(age_ms(decision_ts, quote.recv_ts))
         )
-        if quote.event_ts > decision_ts:
-            quote_valid_for_composite_by_venue[venue_id] = False
-            quote_invalid_reason_by_venue[venue_id] = "future_source_ts"
+        eligibility = composite_quote_eligibility[venue_id]
+        quote_valid_for_composite_by_venue[venue_id] = eligibility.quote_valid_for_composite
+        quote_invalid_reason_by_venue[venue_id] = eligibility.quote_invalid_reason
+        if not eligibility.quote_valid_for_composite or eligibility.adapted_quote is None:
             eligible_by_venue[venue_id] = False
-            ineligible_reason_by_venue[venue_id] = "future_source_ts"
+            ineligible_reason_by_venue[venue_id] = eligibility.eligibility_reason
             continue
-        if quote.crossed_market_flag:
-            quote_valid_for_composite_by_venue[venue_id] = False
-            quote_invalid_reason_by_venue[venue_id] = "crossed_market"
-            eligible_by_venue[venue_id] = False
-            ineligible_reason_by_venue[venue_id] = "crossed_market"
-            continue
-        if str(quote.normalization_status).strip().lower() != "normalized":
-            quote_valid_for_composite_by_venue[venue_id] = False
-            quote_invalid_reason_by_venue[venue_id] = "normalization_status_excluded"
-            eligible_by_venue[venue_id] = False
-            ineligible_reason_by_venue[venue_id] = "normalization_status_excluded"
-            continue
-
-        freshness = assess_source_freshness(
-            venue_id,
-            as_of_ts=decision_ts,
-            last_event_ts=quote.event_ts,
-        )
-        if not freshness.usable_flag:
-            quote_valid_for_composite_by_venue[venue_id] = True
-            quote_invalid_reason_by_venue[venue_id] = None
-            eligible_by_venue[venue_id] = False
-            if freshness.missing_flag:
-                ineligible_reason_by_venue[venue_id] = "missing_source"
-            elif freshness.stale_flag:
-                ineligible_reason_by_venue[venue_id] = "stale_source"
-            else:
-                ineligible_reason_by_venue[venue_id] = "freshness_unusable"
-            continue
-
-        quote_valid_for_composite_by_venue[venue_id] = True
-        quote_invalid_reason_by_venue[venue_id] = None
         if venue_id in outlier_ids:
             eligible_by_venue[venue_id] = False
             ineligible_reason_by_venue[venue_id] = "outlier_rejected"
@@ -563,6 +577,86 @@ def _build_exchange_venue_diagnostics(
         quote_invalid_reason_by_venue=quote_invalid_reason_by_venue,
         eligible_by_venue=eligible_by_venue,
         ineligible_reason_by_venue=ineligible_reason_by_venue,
+    )
+
+
+def _shadow_live_composite_quote_eligibility(
+    quote: ExchangeQuote,
+    *,
+    decision_ts: datetime,
+) -> ShadowLiveCompositeQuoteEligibility:
+    if quote.event_ts > decision_ts or quote.recv_ts > decision_ts:
+        return ShadowLiveCompositeQuoteEligibility(
+            adapted_quote=None,
+            quote_valid_for_composite=False,
+            quote_invalid_reason="future_source_ts",
+            eligibility_reason="future_source_ts",
+        )
+    if quote.crossed_market_flag:
+        return ShadowLiveCompositeQuoteEligibility(
+            adapted_quote=None,
+            quote_valid_for_composite=False,
+            quote_invalid_reason="crossed_market",
+            eligibility_reason="crossed_market",
+        )
+
+    normalization_status = str(quote.normalization_status).strip().lower()
+    if normalization_status not in SHADOW_LIVE_ALLOWED_NORMALIZATION_STATUSES:
+        return ShadowLiveCompositeQuoteEligibility(
+            adapted_quote=None,
+            quote_valid_for_composite=False,
+            quote_invalid_reason="normalization_status_excluded",
+            eligibility_reason="normalization_status_excluded",
+        )
+
+    event_freshness = assess_source_freshness(
+        quote.venue_id,
+        as_of_ts=decision_ts,
+        last_event_ts=quote.event_ts,
+        policy=SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY,
+    )
+    if (
+        event_freshness.last_event_age_ms is not None
+        and event_freshness.last_event_age_ms > SHADOW_LIVE_EVENT_AGE_HARD_CAP_MS
+    ):
+        return ShadowLiveCompositeQuoteEligibility(
+            adapted_quote=None,
+            quote_valid_for_composite=False,
+            quote_invalid_reason="event_age_hard_cap_exceeded",
+            eligibility_reason="event_age_hard_cap_exceeded",
+        )
+
+    recv_freshness = assess_source_freshness(
+        quote.venue_id,
+        as_of_ts=decision_ts,
+        last_event_ts=quote.recv_ts,
+        policy=SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY,
+    )
+    if not recv_freshness.usable_flag:
+        return ShadowLiveCompositeQuoteEligibility(
+            adapted_quote=None,
+            quote_valid_for_composite=True,
+            quote_invalid_reason=None,
+            eligibility_reason=(
+                "missing_source"
+                if recv_freshness.missing_flag
+                else "stale_source"
+                if recv_freshness.stale_flag
+                else "freshness_unusable"
+            ),
+        )
+
+    adapted_quote = replace(
+        quote,
+        event_ts=quote.recv_ts,
+        normalization_status="normalized",
+        source_event_missing_ts_flag=False,
+    )
+    return ShadowLiveCompositeQuoteEligibility(
+        adapted_quote=adapted_quote,
+        quote_valid_for_composite=True,
+        quote_invalid_reason=None,
+        eligibility_reason=None,
     )
 
 

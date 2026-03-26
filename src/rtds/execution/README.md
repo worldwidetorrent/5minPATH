@@ -121,6 +121,17 @@ live cache but still be excluded from composite construction because of:
 - stale event timestamp
 - outlier rejection
 
+Current shadow-live composite policy is intentionally shadow-only:
+- accept exchange quotes with `normalization_status` of:
+  - `normalized`
+  - `normalized_with_missing_event_ts`
+- use `recv_ts` as the primary freshness clock for live composite participation
+- keep `event_ts` as a secondary hard cap
+- keep `minimum_venue_count = 3`
+
+This does not change replay semantics, capture semantics, or policy semantics. It
+exists only to make the live shadow sidecar diagnostic path honest and usable.
+
 Input-surface freeze for v0:
 - no second truth source beyond those normalized session-scoped capture outputs
 - price, spread, size, freshness, and timing come only from the three primary datasets above
