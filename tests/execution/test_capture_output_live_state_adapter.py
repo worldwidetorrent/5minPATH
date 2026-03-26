@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from rtds.execution.capture_output_live_state_adapter import (
+    OPTIONAL_SECONDARY_DATASETS,
+    REQUIRED_NORMALIZED_DATASETS,
     CaptureOutputLiveStateAdapter,
     CaptureOutputLiveStateConfig,
 )
@@ -15,6 +17,12 @@ from rtds.execution.sizing import SIZE_MODE_FIXED_CONTRACTS, SizingPolicy
 def test_capture_output_adapter_is_production_live_state() -> None:
     assert CaptureOutputLiveStateAdapter.descriptor.adapter_role == "live_state"
     assert CaptureOutputLiveStateAdapter.descriptor.production_safe is True
+    assert REQUIRED_NORMALIZED_DATASETS == (
+        "chainlink_ticks",
+        "exchange_quotes",
+        "polymarket_quotes",
+    )
+    assert OPTIONAL_SECONDARY_DATASETS == ("market_metadata_events",)
 
 
 def test_capture_output_adapter_builds_executable_state_from_session_outputs(tmp_path) -> None:
@@ -81,7 +89,31 @@ def test_capture_output_adapter_wires_into_shadow_engine(tmp_path) -> None:
     assert (tmp_path / f"artifacts/shadow/{session_id}/shadow_summary.json").exists()
 
 
-def _write_fixture_session(tmp_path: Path, *, session_id: str) -> None:
+def test_capture_output_adapter_works_without_metadata_dataset(tmp_path) -> None:
+    session_id = "20260326T010000000Z"
+    _write_fixture_session(tmp_path, session_id=session_id, include_metadata=False)
+    adapter = CaptureOutputLiveStateAdapter(
+        CaptureOutputLiveStateConfig(
+            session_id=session_id,
+            normalized_root=tmp_path / "data/normalized",
+            artifacts_root=tmp_path / "artifacts/collect",
+        )
+    )
+
+    state = adapter.read_state()
+
+    assert state is not None
+    assert state.polymarket_slug == "btc-updown-5m-1770000600"
+    assert state.clob_token_id_up == "up-token"
+    assert state.clob_token_id_down == "down-token"
+
+
+def _write_fixture_session(
+    tmp_path: Path,
+    *,
+    session_id: str,
+    include_metadata: bool = True,
+) -> None:
     capture_dir = tmp_path / f"artifacts/collect/date=2026-03-26/session={session_id}"
     normalized_root = tmp_path / "data/normalized"
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -180,17 +212,18 @@ def _write_fixture_session(tmp_path: Path, *, session_id: str) -> None:
         ],
     )
 
-    _write_jsonl(
-        normalized_root
-        / f"market_metadata_events/date=2026-03-26/session={session_id}/part-00000.jsonl",
-        [
-            {
-                "market_id": "0xmarket",
-                "token_yes_id": "up-token",
-                "token_no_id": "down-token",
-            }
-        ],
-    )
+    if include_metadata:
+        _write_jsonl(
+            normalized_root
+            / f"market_metadata_events/date=2026-03-26/session={session_id}/part-00000.jsonl",
+            [
+                {
+                    "market_id": "0xmarket",
+                    "token_yes_id": "up-token",
+                    "token_no_id": "down-token",
+                }
+            ],
+        )
 
 
 def _exchange_row(venue_id: str, instrument_id: str, mid_price: str) -> dict[str, object]:

@@ -45,6 +45,18 @@ The frozen adapter split lives in:
 - [`src/rtds/execution/adapters.py`](/home/ubuntu/testingproject/src/rtds/execution/adapters.py)
 - [`src/rtds/execution/capture_output_live_state_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/capture_output_live_state_adapter.py) is the current production-safe `live_state` implementation over session-scoped normalized capture outputs
 
+The frozen v0 live-state input surfaces are:
+- required normalized datasets:
+  - `data/normalized/chainlink_ticks/date=*/session=*`
+  - `data/normalized/exchange_quotes/date=*/session=*`
+  - `data/normalized/polymarket_quotes/date=*/session=*`
+- optional secondary dataset:
+  - `data/normalized/market_metadata_events/date=*/session=*`
+
+Metadata is secondary only. It may fill token IDs or stable market context if the
+primary Polymarket quote rows do not already contain those fields, but it must never
+act as a second truth source for price, timing, spread, size, or tradability.
+
 The frozen venue-neutral core boundaries live in:
 - [`src/rtds/execution/policy_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/policy_adapter.py)
 - [`src/rtds/execution/sizing.py`](/home/ubuntu/testingproject/src/rtds/execution/sizing.py)

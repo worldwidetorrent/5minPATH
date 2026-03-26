@@ -70,8 +70,17 @@ Wave-two evidence modules:
 
 Current live-state ingestion path:
 - tail `sample_diagnostics.jsonl` as the pacing stream
-- tail session-scoped normalized `chainlink_ticks`, `exchange_quotes`, `polymarket_quotes`, and `market_metadata_events`
+- tail session-scoped normalized primary datasets:
+  - `chainlink_ticks`
+  - `exchange_quotes`
+  - `polymarket_quotes`
+- use `market_metadata_events` only as a secondary fallback for token IDs or stable market context if those fields are missing from the primary quote rows
 - assemble one in-memory `ExecutableStateView` per sample timestamp
+
+Input-surface freeze for v0:
+- no second truth source beyond those normalized session-scoped capture outputs
+- price, spread, size, freshness, and timing come only from the three primary datasets above
+- metadata must not override primary quote truth
 
 Minimal runtime is frozen to:
 - read normalized live state from a `live_state` adapter only

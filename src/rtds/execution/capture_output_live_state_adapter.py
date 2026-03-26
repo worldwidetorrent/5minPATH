@@ -1,4 +1,15 @@
-"""Production-safe live-state adapter over session-scoped normalized capture outputs."""
+"""Production-safe live-state adapter over session-scoped normalized capture outputs.
+
+Required v0 normalized inputs are intentionally frozen to the same three datasets
+the replay loader already treats as primary session-scoped market data:
+- ``chainlink_ticks``
+- ``exchange_quotes``
+- ``polymarket_quotes``
+
+Metadata is a secondary best-effort source only. It may fill token identifiers or
+stable market context if those fields are absent from the primary quote rows, but it
+must never become a second truth source for price, tradability, or timing.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +48,12 @@ from rtds.schemas.normalized import ExchangeQuote, PolymarketQuote
 
 DEFAULT_NORMALIZED_ROOT = Path("data/normalized")
 DEFAULT_ARTIFACTS_ROOT = Path("artifacts/collect")
+REQUIRED_NORMALIZED_DATASETS = (
+    "chainlink_ticks",
+    "exchange_quotes",
+    "polymarket_quotes",
+)
+OPTIONAL_SECONDARY_DATASETS = ("market_metadata_events",)
 
 
 @dataclass(slots=True, frozen=True)
@@ -106,7 +123,13 @@ class _JsonlTailer:
 
 @dataclass(slots=True)
 class CaptureOutputStateAssembler:
-    """Assemble one execution state row from tailed normalized capture outputs."""
+    """Assemble one execution state row from tailed normalized capture outputs.
+
+    The executable-state truth surface is frozen to three primary normalized datasets:
+    Chainlink ticks, exchange quotes, and Polymarket quotes. Metadata is consulted only
+    as a fallback for stable identifiers when the primary Polymarket quote row does not
+    already provide them.
+    """
 
     session_id: str
     calibration_runtime: FrozenCalibrationRuntime | None = None
@@ -234,8 +257,18 @@ class CaptureOutputStateAssembler:
                 if sample_row.get("selected_market_slug") is None
                 else str(sample_row.get("selected_market_slug"))
             ),
-            clob_token_id_up=_optional_str(metadata.get("token_yes_id")),
-            clob_token_id_down=_optional_str(metadata.get("token_no_id")),
+            clob_token_id_up=_optional_str(
+                None
+                if polymarket_quote is None
+                else polymarket_quote.token_yes_id
+            )
+            or _optional_str(metadata.get("token_yes_id")),
+            clob_token_id_down=_optional_str(
+                None
+                if polymarket_quote is None
+                else polymarket_quote.token_no_id
+            )
+            or _optional_str(metadata.get("token_no_id")),
             window_quality_regime=_window_quality_regime(sample_row),
             chainlink_confidence_state=_chainlink_confidence_state(sample_row),
             volatility_regime=_volatility_regime(
@@ -303,7 +336,16 @@ class CaptureOutputStateAssembler:
 
 
 class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
-    """Tail session-scoped normalized capture outputs into live execution state rows."""
+    """Tail session-scoped normalized capture outputs into live execution state rows.
+
+    Production v0 input surfaces are frozen to the same normalized datasets replay
+    already loads as primary truth:
+    - ``chainlink_ticks``
+    - ``exchange_quotes``
+    - ``polymarket_quotes``
+
+    ``market_metadata_events`` remains a secondary optional input only.
+    """
 
     descriptor = AdapterDescriptor(
         adapter_name="capture-output-live-state",
@@ -444,4 +486,6 @@ __all__ = [
     "CaptureOutputLiveStateAdapter",
     "CaptureOutputLiveStateConfig",
     "CaptureOutputStateAssembler",
+    "OPTIONAL_SECONDARY_DATASETS",
+    "REQUIRED_NORMALIZED_DATASETS",
 ]
