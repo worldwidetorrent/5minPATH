@@ -27,6 +27,8 @@ BOOK_SIDE_ASK = "ask"
 CALIBRATION_SUPPORT_SUFFICIENT = "sufficient"
 CALIBRATION_SUPPORT_THIN = "thin"
 CALIBRATION_SUPPORT_MERGE_REQUIRED = "merge_required"
+OUTCOME_STATUS_RESOLVED = "resolved"
+OUTCOME_STATUS_UNRESOLVED = "unresolved"
 
 
 def _validate_state_source_kind(value: str) -> str:
@@ -53,6 +55,22 @@ def _validate_support_flag(value: str | None) -> str | None:
         CALIBRATION_SUPPORT_MERGE_REQUIRED,
     }:
         raise ValueError(f"unsupported calibration_support_flag: {value}")
+    return normalized
+
+
+def _validate_outcome_status(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized not in {OUTCOME_STATUS_RESOLVED, OUTCOME_STATUS_UNRESOLVED}:
+        raise ValueError(f"unsupported outcome_status: {value}")
+    return normalized
+
+
+def _validate_transition_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized:
+        raise ValueError("transition_name must be non-empty when provided")
     return normalized
 
 
@@ -201,6 +219,13 @@ class TradabilityCheck:
     quote_age_ms: int | None
     is_actionable: bool
     no_trade_reason: NoTradeReason | None
+    book_side_present: bool = True
+    freshness_passed: bool = True
+    size_coverage_passed: bool = True
+    spread_passed: bool = True
+    edge_threshold_passed: bool = True
+    policy_check_passed: bool = True
+    market_actionable_passed: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "policy_mode", PolicyMode(self.policy_mode))
@@ -259,6 +284,18 @@ class TradabilityCheck:
             raise ValueError("actionable tradability checks cannot carry no_trade_reason")
         if not self.is_actionable and self.no_trade_reason is None:
             raise ValueError("non-actionable tradability checks require no_trade_reason")
+        if self.is_actionable and not all(
+            (
+                self.book_side_present,
+                self.freshness_passed,
+                self.size_coverage_passed,
+                self.spread_passed,
+                self.edge_threshold_passed,
+                self.policy_check_passed,
+                self.market_actionable_passed,
+            )
+        ):
+            raise ValueError("actionable tradability checks require all component checks to pass")
 
 
 @dataclass(slots=True, frozen=True)
@@ -310,6 +347,8 @@ class ShadowOrderState:
     decision: ShadowDecision
     order_state: OrderState
     updated_ts: datetime
+    transition_name: str | None = None
+    transition_index: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "order_state", OrderState(self.order_state))
@@ -318,6 +357,67 @@ class ShadowOrderState:
             "updated_ts",
             ensure_utc(self.updated_ts, field_name="updated_ts"),
         )
+        object.__setattr__(
+            self,
+            "transition_name",
+            _validate_transition_name(self.transition_name),
+        )
+        if self.transition_index < 0:
+            raise ValueError("transition_index must be non-negative")
+
+
+@dataclass(slots=True, frozen=True)
+class ShadowOutcome:
+    """Outcome-level execution-gap record derived from one shadow decision."""
+
+    decision: ShadowDecision
+    order_state: OrderState
+    outcome_ts: datetime
+    outcome_status: str
+    resolved_up: bool | None
+    replay_expected_pnl: Decimal | None
+    replay_expected_roi: Decimal | None
+    shadow_realized_pnl: Decimal | None
+    shadow_realized_roi: Decimal | None
+    pnl_divergence_vs_replay: Decimal | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "order_state", OrderState(self.order_state))
+        object.__setattr__(
+            self,
+            "outcome_ts",
+            ensure_utc(self.outcome_ts, field_name="outcome_ts"),
+        )
+        object.__setattr__(
+            self,
+            "outcome_status",
+            _validate_outcome_status(self.outcome_status),
+        )
+        for field_name in (
+            "replay_expected_pnl",
+            "replay_expected_roi",
+            "shadow_realized_pnl",
+            "shadow_realized_roi",
+            "pnl_divergence_vs_replay",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    to_decimal(value, field_name=field_name),
+                )
+        if (
+            self.replay_expected_pnl is not None
+            and self.shadow_realized_pnl is not None
+            and self.pnl_divergence_vs_replay is not None
+        ):
+            expected_delta = self.shadow_realized_pnl - self.replay_expected_pnl
+            if self.pnl_divergence_vs_replay != expected_delta:
+                raise ValueError(
+                    "pnl_divergence_vs_replay must equal "
+                    "shadow_realized_pnl - replay_expected_pnl"
+                )
 
 
 @dataclass(slots=True, frozen=True)
@@ -331,12 +431,28 @@ class ShadowSummary:
     no_trade_count: int
     order_state_counts: dict[str, int]
     no_trade_reason_counts: dict[str, int]
+    written_decision_count: int = 0
+    order_state_transition_count: int = 0
+    reject_rate_by_reason: dict[str, Decimal] | None = None
+    tradability_pass_rate: Decimal | None = None
+    freshness_pass_rate: Decimal | None = None
+    size_coverage_pass_rate: Decimal | None = None
+    spread_pass_rate: Decimal | None = None
+    replay_expected_pnl: Decimal | None = None
+    shadow_realized_pnl: Decimal | None = None
+    pnl_divergence_vs_replay: Decimal | None = None
     first_decision_ts: datetime | None = None
     last_decision_ts: datetime | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "policy_mode", PolicyMode(self.policy_mode))
-        if self.decision_count < 0 or self.actionable_decision_count < 0 or self.no_trade_count < 0:
+        if (
+            self.decision_count < 0
+            or self.actionable_decision_count < 0
+            or self.no_trade_count < 0
+            or self.written_decision_count < 0
+            or self.order_state_transition_count < 0
+        ):
             raise ValueError("summary counts must be non-negative")
         if self.first_decision_ts is not None:
             object.__setattr__(
@@ -359,6 +475,72 @@ class ShadowSummary:
             self,
             "no_trade_reason_counts",
             dict(sorted(self.no_trade_reason_counts.items())),
+        )
+        object.__setattr__(
+            self,
+            "reject_rate_by_reason",
+            dict(sorted((self.reject_rate_by_reason or {}).items())),
+        )
+        for field_name in (
+            "tradability_pass_rate",
+            "freshness_pass_rate",
+            "size_coverage_pass_rate",
+            "spread_pass_rate",
+            "replay_expected_pnl",
+            "shadow_realized_pnl",
+            "pnl_divergence_vs_replay",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    to_decimal(value, field_name=field_name),
+                )
+
+
+@dataclass(slots=True, frozen=True)
+class ShadowVsReplaySummary:
+    """Structured execution-gap summary for one reconciled shadow session."""
+
+    session_id: str
+    policy_mode: PolicyMode
+    decision_count: int
+    actionable_decision_count: int
+    reconciled_decision_count: int
+    replay_expected_pnl: Decimal
+    shadow_realized_pnl: Decimal
+    pnl_divergence_vs_replay: Decimal
+    reject_rate_by_reason: dict[str, Decimal]
+    tradability_pass_rate: Decimal | None = None
+    freshness_pass_rate: Decimal | None = None
+    size_coverage_pass_rate: Decimal | None = None
+    spread_pass_rate: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "policy_mode", PolicyMode(self.policy_mode))
+        if (
+            self.decision_count < 0
+            or self.actionable_decision_count < 0
+            or self.reconciled_decision_count < 0
+        ):
+            raise ValueError("comparison counts must be non-negative")
+        for field_name in (
+            "replay_expected_pnl",
+            "shadow_realized_pnl",
+            "pnl_divergence_vs_replay",
+            "tradability_pass_rate",
+            "freshness_pass_rate",
+            "size_coverage_pass_rate",
+            "spread_pass_rate",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(self, field_name, to_decimal(value, field_name=field_name))
+        object.__setattr__(
+            self,
+            "reject_rate_by_reason",
+            dict(sorted(self.reject_rate_by_reason.items())),
         )
 
 
@@ -402,11 +584,15 @@ __all__ = [
     "CALIBRATION_SUPPORT_SUFFICIENT",
     "CALIBRATION_SUPPORT_THIN",
     "ExecutableStateView",
+    "OUTCOME_STATUS_RESOLVED",
+    "OUTCOME_STATUS_UNRESOLVED",
     "STATE_SOURCE_LIVE",
     "STATE_SOURCE_REPLAY",
     "ShadowDecision",
+    "ShadowOutcome",
     "ShadowOrderState",
     "ShadowSummary",
+    "ShadowVsReplaySummary",
     "TradabilityCheck",
     "build_decision_id",
     "build_state_fingerprint",

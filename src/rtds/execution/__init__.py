@@ -16,16 +16,21 @@ from rtds.execution.book_pricer import (
 )
 from rtds.execution.enums import NoTradeReason, OrderState, PolicyMode, Side
 from rtds.execution.ledger import (
+    LEDGER_STATE_RECONCILED,
     LEDGER_STATE_SEEN,
     LEDGER_STATE_WRITTEN,
     LedgerEvent,
     ShadowLedger,
 )
 from rtds.execution.models import (
+    OUTCOME_STATUS_RESOLVED,
+    OUTCOME_STATUS_UNRESOLVED,
     ExecutableStateView,
     ShadowDecision,
     ShadowOrderState,
+    ShadowOutcome,
     ShadowSummary,
+    ShadowVsReplaySummary,
     TradabilityCheck,
     build_decision_id,
     build_state_fingerprint,
@@ -34,6 +39,12 @@ from rtds.execution.policy_adapter import (
     PolicyDecision,
     PolicyEvaluationInput,
     evaluate_policy_decision,
+)
+from rtds.execution.reconciler import (
+    ReconciliationResult,
+    ReplayExpectation,
+    WindowResolution,
+    reconcile_shadow_decisions,
 )
 from rtds.execution.shadow_engine import (
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
@@ -52,6 +63,7 @@ from rtds.execution.sizing import (
     cap_size_to_displayed_liquidity,
     evaluate_sizing,
 )
+from rtds.execution.summary import build_shadow_summary, build_shadow_vs_replay_summary
 from rtds.execution.tradability import (
     TradabilityKernelResult,
     TradabilityPolicy,
@@ -60,8 +72,11 @@ from rtds.execution.tradability import (
 from rtds.execution.version import SCHEMA_VERSION
 from rtds.execution.writer import (
     SHADOW_DECISIONS_FILENAME,
+    SHADOW_ORDER_STATES_FILENAME,
+    SHADOW_OUTCOMES_FILENAME,
     SHADOW_ROOT_DIRNAME,
     SHADOW_SUMMARY_FILENAME,
+    SHADOW_VS_REPLAY_FILENAME,
     ShadowArtifactPaths,
     ShadowArtifactWriter,
     shadow_artifact_paths,
@@ -79,18 +94,26 @@ __all__ = [
     "DEFAULT_HEARTBEAT_INTERVAL_SECONDS",
     "DEFAULT_IDLE_SLEEP_SECONDS",
     "DEFAULT_RECENT_DECISION_BUFFER_SIZE",
+    "LEDGER_STATE_RECONCILED",
     "LEDGER_STATE_SEEN",
     "LEDGER_STATE_WRITTEN",
     "LedgerEvent",
     "NoTradeReason",
+    "OUTCOME_STATUS_RESOLVED",
+    "OUTCOME_STATUS_UNRESOLVED",
     "OrderState",
     "PolicyDecision",
     "PolicyEvaluationInput",
     "PolicyMode",
+    "ReconciliationResult",
+    "ReplayExpectation",
     "SCHEMA_VERSION",
     "SHADOW_DECISIONS_FILENAME",
+    "SHADOW_ORDER_STATES_FILENAME",
+    "SHADOW_OUTCOMES_FILENAME",
     "SHADOW_ROOT_DIRNAME",
     "SHADOW_SUMMARY_FILENAME",
+    "SHADOW_VS_REPLAY_FILENAME",
     "SIZE_MODE_FIXED_CONTRACTS",
     "SIZE_MODE_FIXED_NOTIONAL",
     "ShadowEngine",
@@ -100,8 +123,10 @@ __all__ = [
     "ShadowArtifactPaths",
     "ShadowArtifactWriter",
     "ShadowLedger",
+    "ShadowOutcome",
     "ShadowOrderState",
     "ShadowSummary",
+    "ShadowVsReplaySummary",
     "SizingDecision",
     "SizingInput",
     "SizingPolicy",
@@ -109,14 +134,18 @@ __all__ = [
     "TradabilityCheck",
     "TradabilityKernelResult",
     "TradabilityPolicy",
+    "WindowResolution",
     "assert_live_state_adapter",
     "build_executable_book_context",
     "build_decision_id",
+    "build_shadow_summary",
+    "build_shadow_vs_replay_summary",
     "build_state_fingerprint",
     "cap_size_to_displayed_liquidity",
     "evaluate_policy_decision",
     "evaluate_sizing",
     "evaluate_tradability",
+    "reconcile_shadow_decisions",
     "resolve_intended_book_side",
     "shadow_artifact_paths",
 ]

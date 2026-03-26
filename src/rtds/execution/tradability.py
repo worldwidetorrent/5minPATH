@@ -90,6 +90,12 @@ def evaluate_tradability(
         tradability_policy=tradability_policy,
         selected_net_edge=normalized_edge,
     )
+    component_checks = _component_checks(
+        executable_state=executable_state,
+        book_context=book_context,
+        tradability_policy=tradability_policy,
+        selected_net_edge=normalized_edge,
+    )
     tradability_check = TradabilityCheck(
         policy_mode=tradability_policy.policy_mode,
         intended_side=normalized_side,
@@ -100,6 +106,13 @@ def evaluate_tradability(
         selected_net_edge=normalized_edge,
         selected_spread_abs=book_context.spread_at_decision,
         quote_age_ms=book_context.quote_age_ms,
+        book_side_present=component_checks["book_side_present"],
+        freshness_passed=component_checks["freshness_passed"],
+        size_coverage_passed=component_checks["size_coverage_passed"],
+        spread_passed=component_checks["spread_passed"],
+        edge_threshold_passed=component_checks["edge_threshold_passed"],
+        policy_check_passed=component_checks["policy_check_passed"],
+        market_actionable_passed=component_checks["market_actionable_passed"],
         is_actionable=reject_reason is None,
         no_trade_reason=reject_reason,
     )
@@ -154,6 +167,54 @@ def _primary_reject_reason(
     ):
         return NoTradeReason.EDGE_BELOW_THRESHOLD
     return None
+
+
+def _component_checks(
+    *,
+    executable_state: ExecutableStateView,
+    book_context: ExecutableBookContext,
+    tradability_policy: TradabilityPolicy,
+    selected_net_edge: Decimal | None,
+) -> dict[str, bool]:
+    book_side_present = (
+        book_context.intended_entry_price is not None
+        and book_context.intended_displayed_size_contracts is not None
+    )
+    freshness_passed = (
+        tradability_policy.max_quote_age_ms is None
+        or (
+            book_context.quote_age_ms is not None
+            and book_context.quote_age_ms <= tradability_policy.max_quote_age_ms
+        )
+    )
+    size_coverage_passed = (
+        book_context.intended_displayed_size_contracts is not None
+        and book_context.intended_displayed_size_contracts
+        >= tradability_policy.target_size_contracts
+    )
+    spread_passed = (
+        tradability_policy.max_spread_abs is None
+        or (
+            book_context.spread_at_decision is not None
+            and book_context.spread_at_decision <= tradability_policy.max_spread_abs
+        )
+    )
+    edge_threshold_passed = (
+        tradability_policy.min_net_edge is None
+        or (
+            selected_net_edge is not None
+            and selected_net_edge >= tradability_policy.min_net_edge
+        )
+    )
+    return {
+        "book_side_present": book_side_present,
+        "freshness_passed": freshness_passed,
+        "size_coverage_passed": size_coverage_passed,
+        "spread_passed": spread_passed,
+        "edge_threshold_passed": edge_threshold_passed,
+        "policy_check_passed": not tradability_policy.policy_blocked,
+        "market_actionable_passed": executable_state.market_actionable_flag,
+    }
 
 
 __all__ = [

@@ -57,26 +57,32 @@ The frozen tradability mapping is:
 - `decision_ts == snapshot_ts`
 - `entry_slippage_vs_top_of_book` is a first-class kernel output
 
-The frozen initial shadow artifact tree is:
+The frozen shadow artifact tree is:
 - `artifacts/shadow/<session_id>/shadow_decisions.jsonl`
+- `artifacts/shadow/<session_id>/shadow_order_states.jsonl`
 - `artifacts/shadow/<session_id>/shadow_summary.json`
+- `artifacts/shadow/<session_id>/shadow_outcomes.jsonl`
+- `artifacts/shadow/<session_id>/shadow_vs_replay.json`
 
-The frozen initial evidence set is:
+The current evidence set is:
 - append-only shadow decisions
-- atomic shadow summary
-
-Later artifacts may be added only after the minimal runtime is working:
-- `shadow_order_states.jsonl`
-- `shadow_outcomes.jsonl`
-- `shadow_vs_replay.json`
+- append-only shadow order-state transitions
+- atomic structured shadow summary
+- append-only reconciled shadow outcomes
+- atomic shadow-vs-replay comparison summary
 
 The minimal runtime is now also frozen to:
 - consume `live_state` adapter output only
 - evaluate policy with the frozen decision kernel
-- write shadow decisions and refresh shadow summary
+- write shadow decisions, order-state transitions, and refresh shadow summary
 - log heartbeat
 - isolate internal exceptions and continue
 - shut down safely without affecting capture
+
+Wave-two evidence logic lives in:
+- [`src/rtds/execution/ledger.py`](/home/ubuntu/testingproject/src/rtds/execution/ledger.py)
+- [`src/rtds/execution/summary.py`](/home/ubuntu/testingproject/src/rtds/execution/summary.py)
+- [`src/rtds/execution/reconciler.py`](/home/ubuntu/testingproject/src/rtds/execution/reconciler.py)
 
 ## Consequences
 

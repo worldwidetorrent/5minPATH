@@ -45,15 +45,26 @@ Decision kernel is frozen to:
 - no queue-aware logic
 - no balance or venue-account logic
 
-Evidence storage is frozen initially to:
+Evidence storage now includes:
 - [`artifacts/shadow/<session_id>/shadow_decisions.jsonl`](/home/ubuntu/testingproject/artifacts/shadow)
+- [`artifacts/shadow/<session_id>/shadow_order_states.jsonl`](/home/ubuntu/testingproject/artifacts/shadow)
 - [`artifacts/shadow/<session_id>/shadow_summary.json`](/home/ubuntu/testingproject/artifacts/shadow)
+- [`artifacts/shadow/<session_id>/shadow_outcomes.jsonl`](/home/ubuntu/testingproject/artifacts/shadow)
+- [`artifacts/shadow/<session_id>/shadow_vs_replay.json`](/home/ubuntu/testingproject/artifacts/shadow)
 
 Storage rules:
 - append-only JSONL for decisions
+- append-only JSONL for order-state transitions
+- append-only JSONL for reconciled outcomes
 - atomic summary writes
+- atomic shadow-vs-replay writes
 - schema validation on write through frozen dataclass contracts
 - shadow writes only to the shadow tree, never to capture artifacts
+
+Wave-two evidence modules:
+- [`ledger.py`](/home/ubuntu/testingproject/src/rtds/execution/ledger.py) tracks decision transitions and reconciled outcomes
+- [`summary.py`](/home/ubuntu/testingproject/src/rtds/execution/summary.py) computes structured pass-rate and reject-rate metrics
+- [`reconciler.py`](/home/ubuntu/testingproject/src/rtds/execution/reconciler.py) computes `shadow_outcomes` and `shadow_vs_replay`
 
 Minimal runtime is frozen to:
 - read normalized live state from a `live_state` adapter only

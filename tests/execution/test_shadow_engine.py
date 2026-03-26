@@ -38,15 +38,29 @@ def test_shadow_engine_processes_one_live_row_into_one_decision(tmp_path) -> Non
     processed = engine.process_next_state()
 
     assert processed is True
-    decisions_path = Path(tmp_path / "artifacts/shadow/20260326T000000000Z/shadow_decisions.jsonl")
+    decisions_path = Path(
+        tmp_path / "artifacts/shadow/20260326T000000000Z/shadow_decisions.jsonl"
+    )
+    order_states_path = Path(
+        tmp_path / "artifacts/shadow/20260326T000000000Z/shadow_order_states.jsonl"
+    )
     summary_path = Path(tmp_path / "artifacts/shadow/20260326T000000000Z/shadow_summary.json")
     assert decisions_path.exists()
+    assert order_states_path.exists()
     assert summary_path.exists()
     decision_payload = json.loads(decisions_path.read_text(encoding="utf-8").splitlines()[0])
+    order_state_payloads = [
+        json.loads(line) for line in order_states_path.read_text(encoding="utf-8").splitlines()
+    ]
     summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert decision_payload["decision_id"].startswith("shadowdec:")
+    assert [row["transition_name"] for row in order_state_payloads] == [
+        "decision_seen",
+        "decision_written",
+    ]
     assert summary_payload["decision_count"] == 1
     assert summary_payload["actionable_decision_count"] == 1
+    assert summary_payload["written_decision_count"] == 1
     assert engine.stats.decision_count == 1
 
 
@@ -64,6 +78,7 @@ def test_shadow_engine_propagates_no_trade_reason_into_summary(tmp_path) -> None
     assert summary_payload["no_trade_reason_counts"] == {
         NoTradeReason.QUOTE_STALE.value: 1
     }
+    assert summary_payload["freshness_pass_rate"] == "0"
     assert engine.stats.last_no_trade_reason == NoTradeReason.QUOTE_STALE.value
 
 

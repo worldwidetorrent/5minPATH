@@ -7,12 +7,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from rtds.execution.models import ShadowDecision, ShadowSummary
+from rtds.execution.models import (
+    ShadowDecision,
+    ShadowOrderState,
+    ShadowOutcome,
+    ShadowSummary,
+    ShadowVsReplaySummary,
+)
 from rtds.storage.writer import json_dumps_stable, serialize_value
 
 SHADOW_ROOT_DIRNAME = "artifacts/shadow"
 SHADOW_DECISIONS_FILENAME = "shadow_decisions.jsonl"
+SHADOW_ORDER_STATES_FILENAME = "shadow_order_states.jsonl"
+SHADOW_OUTCOMES_FILENAME = "shadow_outcomes.jsonl"
 SHADOW_SUMMARY_FILENAME = "shadow_summary.json"
+SHADOW_VS_REPLAY_FILENAME = "shadow_vs_replay.json"
 
 
 @dataclass(slots=True, frozen=True)
@@ -23,7 +32,10 @@ class ShadowArtifactPaths:
     root_dir: Path
     session_dir: Path
     shadow_decisions_path: Path
+    shadow_order_states_path: Path
+    shadow_outcomes_path: Path
     shadow_summary_path: Path
+    shadow_vs_replay_path: Path
 
 
 def shadow_artifact_paths(
@@ -43,7 +55,10 @@ def shadow_artifact_paths(
         root_dir=base_root,
         session_dir=session_dir,
         shadow_decisions_path=session_dir / SHADOW_DECISIONS_FILENAME,
+        shadow_order_states_path=session_dir / SHADOW_ORDER_STATES_FILENAME,
+        shadow_outcomes_path=session_dir / SHADOW_OUTCOMES_FILENAME,
         shadow_summary_path=session_dir / SHADOW_SUMMARY_FILENAME,
+        shadow_vs_replay_path=session_dir / SHADOW_VS_REPLAY_FILENAME,
     )
 
 
@@ -83,6 +98,36 @@ class ShadowArtifactWriter:
             summary,
         )
 
+    def append_shadow_order_state(self, order_state: ShadowOrderState) -> Path:
+        """Append one validated shadow order-state transition row."""
+
+        if not isinstance(order_state, ShadowOrderState):
+            raise TypeError("append_shadow_order_state requires ShadowOrderState")
+        return _append_jsonl_dataclass(
+            self._paths.shadow_order_states_path,
+            order_state,
+        )
+
+    def append_shadow_outcome(self, outcome: ShadowOutcome) -> Path:
+        """Append one validated shadow outcome row."""
+
+        if not isinstance(outcome, ShadowOutcome):
+            raise TypeError("append_shadow_outcome requires ShadowOutcome")
+        return _append_jsonl_dataclass(
+            self._paths.shadow_outcomes_path,
+            outcome,
+        )
+
+    def write_shadow_vs_replay(self, summary: ShadowVsReplaySummary) -> Path:
+        """Atomically write the current shadow-vs-replay comparison summary."""
+
+        if not isinstance(summary, ShadowVsReplaySummary):
+            raise TypeError("write_shadow_vs_replay requires ShadowVsReplaySummary")
+        return _atomic_write_json_dataclass(
+            self._paths.shadow_vs_replay_path,
+            summary,
+        )
+
 
 def _append_jsonl_dataclass(path: Path, row: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,8 +161,11 @@ def _atomic_write_json_dataclass(path: Path, payload: object) -> Path:
 
 __all__ = [
     "SHADOW_DECISIONS_FILENAME",
+    "SHADOW_ORDER_STATES_FILENAME",
+    "SHADOW_OUTCOMES_FILENAME",
     "SHADOW_ROOT_DIRNAME",
     "SHADOW_SUMMARY_FILENAME",
+    "SHADOW_VS_REPLAY_FILENAME",
     "ShadowArtifactPaths",
     "ShadowArtifactWriter",
     "shadow_artifact_paths",

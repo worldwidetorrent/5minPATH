@@ -176,9 +176,11 @@ class ShadowEngine:
         self.writer.write_shadow_summary(self.ledger.build_summary())
 
     def _record_policy_decision(self, policy_decision: PolicyDecision) -> None:
-        self.ledger.record_decision_seen(policy_decision.shadow_decision)
+        seen_state = self.ledger.record_decision_seen(policy_decision.shadow_decision)
+        self.writer.append_shadow_order_state(seen_state)
         self.writer.append_shadow_decision(policy_decision.shadow_decision)
-        self.ledger.record_decision_written(policy_decision.shadow_decision)
+        written_state = self.ledger.record_decision_written(policy_decision.shadow_decision)
+        self.writer.append_shadow_order_state(written_state)
         self.stats.decision_count += 1
         self.stats.last_decision_id = policy_decision.shadow_decision.decision_id
         self._recent_decision_ids.append(policy_decision.shadow_decision.decision_id)

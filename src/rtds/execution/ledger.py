@@ -1,4 +1,4 @@
-"""Minimal in-memory ledger for execution-v0 shadow evidence."""
+"""In-memory execution-v0 ledger for shadow evidence and state transitions."""
 
 from __future__ import annotations
 
@@ -7,15 +7,16 @@ from datetime import datetime
 
 from rtds.core.time import ensure_utc
 from rtds.execution.enums import OrderState, PolicyMode
-from rtds.execution.models import ShadowDecision, ShadowSummary
+from rtds.execution.models import ShadowDecision, ShadowOrderState, ShadowOutcome, ShadowSummary
 
 LEDGER_STATE_SEEN = "decision_seen"
 LEDGER_STATE_WRITTEN = "decision_written"
+LEDGER_STATE_RECONCILED = "decision_reconciled"
 
 
 @dataclass(slots=True, frozen=True)
 class LedgerEvent:
-    """Minimal internal ledger event for one shadow decision."""
+    """Internal ledger event for one shadow decision transition."""
 
     decision_id: str
     session_id: str
@@ -29,13 +30,17 @@ class LedgerEvent:
         object.__setattr__(self, "order_state", OrderState(self.order_state))
         object.__setattr__(self, "event_ts", ensure_utc(self.event_ts, field_name="event_ts"))
         normalized_state = str(self.ledger_state).strip().lower()
-        if normalized_state not in {LEDGER_STATE_SEEN, LEDGER_STATE_WRITTEN}:
+        if normalized_state not in {
+            LEDGER_STATE_SEEN,
+            LEDGER_STATE_WRITTEN,
+            LEDGER_STATE_RECONCILED,
+        }:
             raise ValueError(f"unsupported ledger_state: {self.ledger_state}")
         object.__setattr__(self, "ledger_state", normalized_state)
 
 
 class ShadowLedger:
-    """Track minimal decision-seen and decision-written transitions."""
+    """Track shadow decisions, state transitions, and optional reconciled outcomes."""
 
     def __init__(self, *, session_id: str, policy_mode: PolicyMode) -> None:
         normalized_session_id = str(session_id).strip()
@@ -44,8 +49,11 @@ class ShadowLedger:
         self._session_id = normalized_session_id
         self._policy_mode = PolicyMode(policy_mode)
         self._events: list[LedgerEvent] = []
+        self._order_states: list[ShadowOrderState] = []
+        self._outcomes: list[ShadowOutcome] = []
         self._seen_ids: set[str] = set()
         self._written_ids: set[str] = set()
+        self._reconciled_ids: set[str] = set()
         self._decisions_by_id: dict[str, ShadowDecision] = {}
 
     @property
@@ -60,65 +68,85 @@ class ShadowLedger:
     def events(self) -> tuple[LedgerEvent, ...]:
         return tuple(self._events)
 
-    def record_decision_seen(self, decision: ShadowDecision) -> LedgerEvent:
+    @property
+    def decisions(self) -> tuple[ShadowDecision, ...]:
+        return tuple(
+            self._decisions_by_id[decision_id]
+            for decision_id in sorted(self._decisions_by_id)
+        )
+
+    @property
+    def order_states(self) -> tuple[ShadowOrderState, ...]:
+        return tuple(self._order_states)
+
+    @property
+    def outcomes(self) -> tuple[ShadowOutcome, ...]:
+        return tuple(self._outcomes)
+
+    @property
+    def seen_decision_count(self) -> int:
+        return len(self._seen_ids)
+
+    @property
+    def written_decision_count(self) -> int:
+        return len(self._written_ids)
+
+    @property
+    def reconciled_decision_count(self) -> int:
+        return len(self._reconciled_ids)
+
+    def record_decision_seen(self, decision: ShadowDecision) -> ShadowOrderState:
         """Record that a decision was produced by the decision kernel."""
 
-        return self._record_event(
+        return self._record_transition(
             decision=decision,
             ledger_state=LEDGER_STATE_SEEN,
         )
 
-    def record_decision_written(self, decision: ShadowDecision) -> LedgerEvent:
+    def record_decision_written(self, decision: ShadowDecision) -> ShadowOrderState:
         """Record that a decision was durably written to the shadow tree."""
 
-        return self._record_event(
+        return self._record_transition(
             decision=decision,
             ledger_state=LEDGER_STATE_WRITTEN,
         )
 
-    def build_summary(self) -> ShadowSummary:
-        """Build the minimal shadow summary from seen decisions."""
+    def record_outcome(self, outcome: ShadowOutcome) -> ShadowOrderState:
+        """Record one reconciled shadow outcome and its state transition."""
 
-        seen_decisions = [
-            event
-            for event in self._events
-            if event.ledger_state == LEDGER_STATE_SEEN
-        ]
-        actionable_count = 0
-        no_trade_count = 0
-        order_state_counts: dict[str, int] = {}
-        no_trade_reason_counts: dict[str, int] = {}
-        first_ts: datetime | None = None
-        last_ts: datetime | None = None
-        for event in seen_decisions:
-            order_state_counts[event.order_state.value] = (
-                order_state_counts.get(event.order_state.value, 0) + 1
-            )
-            matching_decision = self._decisions_by_id[event.decision_id]
-            tradability = matching_decision.tradability_check
-            if tradability.is_actionable:
-                actionable_count += 1
-            else:
-                no_trade_count += 1
-                if tradability.no_trade_reason is not None:
-                    key = tradability.no_trade_reason.value
-                    no_trade_reason_counts[key] = no_trade_reason_counts.get(key, 0) + 1
-            event_ts = matching_decision.decision_ts
-            first_ts = event_ts if first_ts is None or event_ts < first_ts else first_ts
-            last_ts = event_ts if last_ts is None or event_ts > last_ts else last_ts
-        return ShadowSummary(
-            session_id=self._session_id,
-            policy_mode=self._policy_mode,
-            decision_count=len(seen_decisions),
-            actionable_decision_count=actionable_count,
-            no_trade_count=no_trade_count,
-            order_state_counts=order_state_counts,
-            no_trade_reason_counts=no_trade_reason_counts,
-            first_decision_ts=first_ts,
-            last_decision_ts=last_ts,
+        decision = outcome.decision
+        if decision.executable_state.session_id != self._session_id:
+            raise ValueError("outcome session_id does not match ledger session_id")
+        if decision.policy_mode != self._policy_mode:
+            raise ValueError("outcome policy_mode does not match ledger policy_mode")
+        if decision.decision_id not in self._seen_ids:
+            raise ValueError("decision must be seen before reconciliation")
+        if decision.decision_id in self._reconciled_ids:
+            raise ValueError("decision already reconciled")
+        self._reconciled_ids.add(decision.decision_id)
+        self._outcomes.append(outcome)
+        return self._record_transition(
+            decision=decision,
+            ledger_state=LEDGER_STATE_RECONCILED,
+            event_ts=outcome.outcome_ts,
+            order_state=outcome.order_state,
         )
 
-    def _record_event(self, *, decision: ShadowDecision, ledger_state: str) -> LedgerEvent:
+    def build_summary(self) -> ShadowSummary:
+        """Build the structured summary from current ledger contents."""
+
+        from rtds.execution.summary import build_shadow_summary
+
+        return build_shadow_summary(self)
+
+    def _record_transition(
+        self,
+        *,
+        decision: ShadowDecision,
+        ledger_state: str,
+        event_ts: datetime | None = None,
+        order_state: OrderState | None = None,
+    ) -> ShadowOrderState:
         if decision.executable_state.session_id != self._session_id:
             raise ValueError("decision session_id does not match ledger session_id")
         if decision.policy_mode != self._policy_mode:
@@ -128,30 +156,47 @@ class ShadowLedger:
                 raise ValueError("decision already recorded as seen")
             self._seen_ids.add(decision.decision_id)
             self._decisions_by_id[decision.decision_id] = decision
-        if ledger_state == LEDGER_STATE_WRITTEN:
+        elif ledger_state == LEDGER_STATE_WRITTEN:
             if decision.decision_id not in self._seen_ids:
                 raise ValueError("decision must be seen before written")
             if decision.decision_id in self._written_ids:
                 raise ValueError("decision already recorded as written")
             self._written_ids.add(decision.decision_id)
-        order_state = (
-            OrderState.ELIGIBLE_RECORDED
-            if decision.tradability_check.is_actionable
-            else OrderState.NO_TRADE_RECORDED
-        )
+        elif ledger_state == LEDGER_STATE_RECONCILED:
+            if decision.decision_id not in self._seen_ids:
+                raise ValueError("decision must be seen before reconciled")
+        else:
+            raise ValueError(f"unsupported ledger_state: {ledger_state}")
+        resolved_order_state = order_state or self._derive_order_state(decision)
+        resolved_event_ts = decision.decision_ts if event_ts is None else event_ts
         event = LedgerEvent(
             decision_id=decision.decision_id,
             session_id=self._session_id,
             policy_mode=self._policy_mode,
-            order_state=order_state,
+            order_state=resolved_order_state,
             ledger_state=ledger_state,
-            event_ts=decision.decision_ts,
+            event_ts=resolved_event_ts,
         )
         self._events.append(event)
-        return event
+        order_state_row = ShadowOrderState(
+            decision=decision,
+            order_state=resolved_order_state,
+            updated_ts=resolved_event_ts,
+            transition_name=ledger_state,
+            transition_index=len(self._order_states),
+        )
+        self._order_states.append(order_state_row)
+        return order_state_row
+
+    @staticmethod
+    def _derive_order_state(decision: ShadowDecision) -> OrderState:
+        if decision.tradability_check.is_actionable:
+            return OrderState.ELIGIBLE_RECORDED
+        return OrderState.NO_TRADE_RECORDED
 
 
 __all__ = [
+    "LEDGER_STATE_RECONCILED",
     "LEDGER_STATE_SEEN",
     "LEDGER_STATE_WRITTEN",
     "LedgerEvent",
