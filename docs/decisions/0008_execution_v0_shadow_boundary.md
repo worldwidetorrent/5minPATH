@@ -43,6 +43,7 @@ The older schema layer remains in:
 
 The frozen adapter split lives in:
 - [`src/rtds/execution/adapters.py`](/home/ubuntu/testingproject/src/rtds/execution/adapters.py)
+- [`src/rtds/execution/capture_output_live_state_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/capture_output_live_state_adapter.py) is the current production-safe `live_state` implementation over session-scoped normalized capture outputs
 
 The frozen venue-neutral core boundaries live in:
 - [`src/rtds/execution/policy_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/policy_adapter.py)

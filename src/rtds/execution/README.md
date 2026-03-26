@@ -12,6 +12,8 @@ Runtime ownership is fixed:
 Adapter split is fixed:
 - `live_state` adapters are the only production path
 - `replay_tail` adapters are non-production and exist only for smoke tests, replay, and debugging
+- the concrete production adapter currently tails session-scoped capture outputs via
+  [`capture_output_live_state_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/capture_output_live_state_adapter.py)
 
 Core execution consumes normalized internal state from:
 - [`enums.py`](/home/ubuntu/testingproject/src/rtds/execution/enums.py)
@@ -65,6 +67,11 @@ Wave-two evidence modules:
 - [`ledger.py`](/home/ubuntu/testingproject/src/rtds/execution/ledger.py) tracks decision transitions and reconciled outcomes
 - [`summary.py`](/home/ubuntu/testingproject/src/rtds/execution/summary.py) computes structured pass-rate and reject-rate metrics
 - [`reconciler.py`](/home/ubuntu/testingproject/src/rtds/execution/reconciler.py) computes `shadow_outcomes` and `shadow_vs_replay`
+
+Current live-state ingestion path:
+- tail `sample_diagnostics.jsonl` as the pacing stream
+- tail session-scoped normalized `chainlink_ticks`, `exchange_quotes`, `polymarket_quotes`, and `market_metadata_events`
+- assemble one in-memory `ExecutableStateView` per sample timestamp
 
 Minimal runtime is frozen to:
 - read normalized live state from a `live_state` adapter only
