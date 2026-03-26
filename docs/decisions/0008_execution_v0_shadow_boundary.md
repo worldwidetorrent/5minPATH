@@ -57,6 +57,14 @@ Metadata is secondary only. It may fill token IDs or stable market context if th
 primary Polymarket quote rows do not already contain those fields, but it must never
 act as a second truth source for price, timing, spread, size, or tradability.
 
+Incremental file-tail behavior is also frozen for the capture-output live-state path:
+- watch session-scoped JSONL partitions as capture appends them
+- track per-file offsets and return appended rows only
+- tolerate file creation during runtime
+- tolerate cross-midnight `date=*` session partition rollover
+- never block capture
+- fail open on tail-read failures by logging and continuing
+
 The frozen venue-neutral core boundaries live in:
 - [`src/rtds/execution/policy_adapter.py`](/home/ubuntu/testingproject/src/rtds/execution/policy_adapter.py)
 - [`src/rtds/execution/sizing.py`](/home/ubuntu/testingproject/src/rtds/execution/sizing.py)

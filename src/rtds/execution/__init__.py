@@ -20,6 +20,7 @@ from rtds.execution.capture_output_live_state_adapter import (
     CaptureOutputStateAssembler,
 )
 from rtds.execution.enums import NoTradeReason, OrderState, PolicyMode, Side
+from rtds.execution.file_tail import JsonlFileTail
 from rtds.execution.ledger import (
     LEDGER_STATE_RECONCILED,
     LEDGER_STATE_SEEN,
@@ -150,6 +151,7 @@ __all__ = [
     "CaptureOutputLiveStateAdapter",
     "CaptureOutputLiveStateConfig",
     "CaptureOutputStateAssembler",
+    "JsonlFileTail",
     "evaluate_policy_decision",
     "evaluate_sizing",
     "evaluate_tradability",

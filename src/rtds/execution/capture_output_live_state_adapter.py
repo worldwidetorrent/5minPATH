@@ -13,8 +13,6 @@ must never become a second truth source for price, tradability, or timing.
 
 from __future__ import annotations
 
-import glob
-import json
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -29,6 +27,7 @@ from rtds.execution.adapters import (
     AdapterDescriptor,
     ExecutionStateAdapter,
 )
+from rtds.execution.file_tail import JsonlFileTail
 from rtds.execution.models import ExecutableStateView
 from rtds.features.composite_nowcast import CompositeNowcast, compute_composite_nowcast
 from rtds.features.fair_value_base import compute_fair_value_base
@@ -89,37 +88,6 @@ class CaptureOutputLiveStateConfig:
                 "calibration_summary_path",
                 Path(self.calibration_summary_path),
             )
-
-
-@dataclass(slots=True)
-class _JsonlTailer:
-    pattern: str
-    _offsets: dict[Path, int] = field(default_factory=dict)
-
-    def read_new_rows(self) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for raw_path in sorted(glob.glob(self.pattern)):
-            path = Path(raw_path)
-            if not path.is_file():
-                continue
-            offset = self._offsets.get(path, 0)
-            with path.open("r", encoding="utf-8") as handle:
-                handle.seek(offset)
-                while True:
-                    start_pos = handle.tell()
-                    line = handle.readline()
-                    if not line:
-                        break
-                    if not line.endswith("\n"):
-                        handle.seek(start_pos)
-                        break
-                    payload = line.strip()
-                    if not payload:
-                        continue
-                    rows.append(json.loads(payload))
-                self._offsets[path] = handle.tell()
-        return rows
-
 
 @dataclass(slots=True)
 class CaptureOutputStateAssembler:
@@ -372,27 +340,27 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
             volatility_policy=config.volatility_policy,
         )
         self._pending_samples: deque[dict[str, Any]] = deque()
-        self._sample_tailer = _JsonlTailer(
+        self._sample_tailer = JsonlFileTail(
             pattern=(
                 f"{config.artifacts_root}/date=*/session={config.session_id}/sample_diagnostics.jsonl"
             )
         )
-        self._chainlink_tailer = _JsonlTailer(
+        self._chainlink_tailer = JsonlFileTail(
             pattern=(
                 f"{config.normalized_root}/chainlink_ticks/date=*/session={config.session_id}/*.jsonl"
             )
         )
-        self._exchange_tailer = _JsonlTailer(
+        self._exchange_tailer = JsonlFileTail(
             pattern=(
                 f"{config.normalized_root}/exchange_quotes/date=*/session={config.session_id}/*.jsonl"
             )
         )
-        self._polymarket_tailer = _JsonlTailer(
+        self._polymarket_tailer = JsonlFileTail(
             pattern=(
                 f"{config.normalized_root}/polymarket_quotes/date=*/session={config.session_id}/*.jsonl"
             )
         )
-        self._metadata_tailer = _JsonlTailer(
+        self._metadata_tailer = JsonlFileTail(
             pattern=(
                 f"{config.normalized_root}/market_metadata_events/date=*/session={config.session_id}/*.jsonl"
             )

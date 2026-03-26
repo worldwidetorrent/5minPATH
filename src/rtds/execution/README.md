@@ -76,6 +76,13 @@ Current live-state ingestion path:
   - `polymarket_quotes`
 - use `market_metadata_events` only as a secondary fallback for token IDs or stable market context if those fields are missing from the primary quote rows
 - assemble one in-memory `ExecutableStateView` per sample timestamp
+- incremental file tailing is handled by [`file_tail.py`](/home/ubuntu/testingproject/src/rtds/execution/file_tail.py)
+  and is frozen to:
+  - discover new JSONL files during runtime
+  - track per-file offsets
+  - tolerate cross-midnight `date=*` partition rollover for one session
+  - skip incomplete trailing lines until they are complete
+  - fail open on read/decode errors by logging and continuing
 
 Input-surface freeze for v0:
 - no second truth source beyond those normalized session-scoped capture outputs
