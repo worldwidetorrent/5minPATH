@@ -4,6 +4,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+from rtds.core.time import parse_utc
 from rtds.execution.capture_output_live_state_adapter import (
     EMISSION_CADENCE_SAMPLE_COMPLETE_POLYMARKET,
     OPTIONAL_SECONDARY_DATASETS,
@@ -51,6 +52,9 @@ def test_capture_output_adapter_builds_executable_state_from_session_outputs(tmp
     assert state.window_quality_regime == "good"
     assert state.fair_value_base is not None
     assert state.calibrated_fair_value_base == state.fair_value_base
+    assert state.chainlink_event_ts <= state.snapshot_ts
+    assert state.exchange_event_ts <= state.snapshot_ts
+    assert state.quote_event_ts <= state.snapshot_ts
     assert state.up_ask_price is not None
     assert adapter.state_cache.latest_chainlink_tick is not None
     assert adapter.state_cache.latest_exchange_mid_by_venue == {
@@ -453,6 +457,144 @@ def test_capture_output_adapter_reports_soft_tail_errors(tmp_path, caplog) -> No
     assert state is not None
     assert adapter.consume_soft_error_count() == 1
     assert adapter.consume_soft_error_count() == 0
+
+
+def test_capture_output_adapter_uses_only_as_of_source_rows_per_sample(tmp_path) -> None:
+    session_id = "20260326T010000000Z"
+    _write_fixture_session(
+        tmp_path,
+        session_id=session_id,
+        extra_samples=[
+            {
+                "sample_index": 2,
+                "sample_started_at": "2026-03-26T01:00:06.000Z",
+                "sample_status": "healthy",
+                "degraded_sources": [],
+                "selected_market_id": "0xmarket",
+                "selected_market_slug": "btc-updown-5m-1770000600",
+                "selected_window_id": "btc-5m-20260326T010000Z",
+                "source_results": {
+                    "chainlink": {"status": "success", "details": {"fallback_used": False}},
+                    "polymarket_quotes": {
+                        "status": "success",
+                        "details": {"seconds_remaining": 294},
+                    },
+                },
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path
+        / f"data/normalized/chainlink_ticks/date=2026-03-26/session={session_id}/part-00000.jsonl",
+        [
+            {
+                "event_id": "chain-2",
+                "event_ts": "2026-03-26T01:00:06Z",
+                "price": "70010",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "oracle_source": "chainlink_stream_public_delayed",
+                "oracle_feed_id": "chainlink:stream:BTC-USD",
+                "round_id": None,
+                "bid_price": "70009",
+                "ask_price": "70011",
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path
+        / f"data/normalized/exchange_quotes/date=2026-03-26/session={session_id}/part-00000.jsonl",
+        [
+            _exchange_row("binance", "binance:spot:BTCUSDT", "70600.0") | {
+                "event_ts": "2026-03-26T01:00:06Z",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "proc_ts": "2026-03-26T01:00:06Z",
+                "created_ts": "2026-03-26T01:00:06Z",
+                "sequence_id": "binance-2",
+            },
+            _exchange_row("coinbase", "coinbase:spot:BTC-USD", "70610.0") | {
+                "event_ts": "2026-03-26T01:00:06Z",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "proc_ts": "2026-03-26T01:00:06Z",
+                "created_ts": "2026-03-26T01:00:06Z",
+                "sequence_id": "coinbase-2",
+            },
+            _exchange_row("kraken", "kraken:spot:BTC-USD", "70620.0") | {
+                "event_ts": "2026-03-26T01:00:06Z",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "proc_ts": "2026-03-26T01:00:06Z",
+                "created_ts": "2026-03-26T01:00:06Z",
+                "sequence_id": "kraken-2",
+            },
+        ],
+    )
+    _append_jsonl(
+        tmp_path
+        / (
+            "data/normalized/polymarket_quotes/"
+            f"date=2026-03-26/session={session_id}/part-00000.jsonl"
+        ),
+        [
+            {
+                "venue_id": "polymarket",
+                "market_id": "0xmarket",
+                "asset_id": "BTC",
+                "event_ts": "2026-03-26T01:00:06Z",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "proc_ts": "2026-03-26T01:00:06Z",
+                "up_bid": "0.61",
+                "up_ask": "0.63",
+                "down_bid": "0.37",
+                "down_ask": "0.39",
+                "up_bid_size_contracts": "55",
+                "up_ask_size_contracts": "44",
+                "down_bid_size_contracts": "55",
+                "down_ask_size_contracts": "44",
+                "raw_event_id": "rawpoly:2",
+                "normalizer_version": "0.1.0",
+                "schema_version": "0.1.0",
+                "created_ts": "2026-03-26T01:00:06Z",
+                "token_yes_id": "up-token",
+                "token_no_id": "down-token",
+                "market_quote_type": "orderbook_top",
+                "quote_sequence_id": "seq-2",
+                "market_mid_up": "0.62",
+                "market_mid_down": "0.38",
+                "market_spread_up_abs": "0.02",
+                "market_spread_down_abs": "0.02",
+                "last_trade_price": None,
+                "last_trade_size_contracts": None,
+                "last_trade_side": None,
+                "last_trade_outcome": None,
+                "source_event_missing_ts_flag": False,
+                "crossed_market_flag": False,
+                "locked_market_flag": False,
+                "quote_completeness_flag": True,
+                "normalization_status": "normalized",
+            }
+        ],
+    )
+    adapter = CaptureOutputLiveStateAdapter(
+        CaptureOutputLiveStateConfig(
+            session_id=session_id,
+            normalized_root=tmp_path / "data/normalized",
+            artifacts_root=tmp_path / "artifacts/collect",
+        )
+    )
+
+    first_state = adapter.read_state()
+    second_state = adapter.read_state()
+
+    assert first_state is not None
+    assert second_state is not None
+    assert first_state.snapshot_ts == parse_utc("2026-03-26T01:00:05.000Z")
+    assert first_state.chainlink_event_ts == parse_utc("2026-03-26T01:00:04Z")
+    assert first_state.exchange_event_ts == parse_utc("2026-03-26T01:00:05Z")
+    assert first_state.quote_event_ts == parse_utc("2026-03-26T01:00:05Z")
+    assert first_state.state_invalid_reason is None
+    assert second_state.snapshot_ts == parse_utc("2026-03-26T01:00:06.000Z")
+    assert second_state.chainlink_event_ts == parse_utc("2026-03-26T01:00:06Z")
+    assert second_state.exchange_event_ts == parse_utc("2026-03-26T01:00:06Z")
+    assert second_state.quote_event_ts == parse_utc("2026-03-26T01:00:06Z")
 
 
 def _write_fixture_session(

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rtds.core.time import parse_utc
 from rtds.execution.adapters import (
     ADAPTER_ROLE_LIVE_STATE,
     AdapterDescriptor,
@@ -126,6 +127,9 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
         self._last_emitted_state_fingerprint: str | None = None
         self._last_emitted_identity: tuple[str, object, str] | None = None
         self._pending_samples: deque[dict[str, Any]] = deque()
+        self._pending_chainlink_rows: deque[dict[str, Any]] = deque()
+        self._pending_exchange_rows: deque[dict[str, Any]] = deque()
+        self._pending_polymarket_rows: deque[dict[str, Any]] = deque()
         self._sample_tailer = JsonlFileTail(
             pattern=(
                 f"{config.artifacts_root}/date=*/session={config.session_id}/sample_diagnostics.jsonl"
@@ -157,6 +161,9 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
             return None
         self._refresh_tails()
         while self._pending_samples:
+            sample_row = self._pending_samples[0]
+            sample_ts = parse_utc(str(sample_row["sample_started_at"]))
+            self._advance_sources_up_to(sample_ts)
             sample_row = self._pending_samples.popleft()
             if not _is_polymarket_completion_trigger(sample_row):
                 continue
@@ -203,15 +210,32 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
 
     def _refresh_tails(self) -> None:
         for row in self._chainlink_tailer.read_new_rows():
-            self._assembler.ingest_chainlink_row(row)
+            self._pending_chainlink_rows.append(dict(row))
         for row in self._exchange_tailer.read_new_rows():
-            self._assembler.ingest_exchange_row(row)
+            self._pending_exchange_rows.append(dict(row))
         for row in self._polymarket_tailer.read_new_rows():
-            self._assembler.ingest_polymarket_row(row)
+            self._pending_polymarket_rows.append(dict(row))
         for row in self._metadata_tailer.read_new_rows():
-            self._assembler.ingest_metadata_row(row)
+            self._assembler.ingest_metadata_row(dict(row))
         for row in self._sample_tailer.read_new_rows():
             self._pending_samples.append(dict(row))
+
+    def _advance_sources_up_to(self, sample_ts) -> None:
+        while (
+            self._pending_chainlink_rows
+            and _row_ts(self._pending_chainlink_rows[0]) <= sample_ts
+        ):
+            self._assembler.ingest_chainlink_row(self._pending_chainlink_rows.popleft())
+        while (
+            self._pending_exchange_rows
+            and _row_ts(self._pending_exchange_rows[0]) <= sample_ts
+        ):
+            self._assembler.ingest_exchange_row(self._pending_exchange_rows.popleft())
+        while (
+            self._pending_polymarket_rows
+            and _row_ts(self._pending_polymarket_rows[0]) <= sample_ts
+        ):
+            self._assembler.ingest_polymarket_row(self._pending_polymarket_rows.popleft())
 
 
 def _is_polymarket_completion_trigger(sample_row: dict[str, Any]) -> bool:
@@ -235,6 +259,14 @@ def _supports_tradability(state: ExecutableStateView) -> bool:
         state.down_ask_size_contracts,
     )
     return all(value is not None for value in required_values)
+
+
+def _row_ts(row: dict[str, Any]):
+    for key in ("event_ts", "recv_ts", "created_ts", "updated_ts"):
+        value = row.get(key)
+        if value is not None:
+            return parse_utc(str(value))
+    raise ValueError(f"row is missing timestamp fields: {sorted(row)}")
 
 
 __all__ = [

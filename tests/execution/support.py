@@ -52,6 +52,8 @@ def build_state_view(
         calibration_bucket="far_up",
         calibration_support_flag=calibration_support_flag,
         quote_source="polymarket",
+        chainlink_event_ts=decision_ts,
+        exchange_event_ts=decision_ts,
         quote_event_ts=decision_ts,
         quote_recv_ts=decision_ts,
         quote_age_ms=quote_age_ms,
@@ -66,6 +68,12 @@ def build_state_view(
         up_spread_abs=up_spread_abs,
         down_spread_abs=down_spread_abs,
         market_actionable_flag=market_actionable_flag,
+        exchange_trusted_venue_count=3,
+        exchange_rejected_venue_count=0,
+        open_anchor_present=True,
+        composite_nowcast_present=True,
+        nowcast_history_length=32,
+        volatility_sigma_eff=Decimal("0.0015"),
     )
 
 

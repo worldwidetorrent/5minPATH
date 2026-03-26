@@ -14,7 +14,12 @@ from decimal import Decimal
 from typing import Any
 
 from rtds.core.time import ensure_utc, format_utc, format_utc_compact
-from rtds.core.units import to_decimal, validate_contract_price, validate_size
+from rtds.core.units import (
+    to_decimal,
+    validate_contract_price,
+    validate_size,
+    validate_volatility,
+)
 from rtds.execution.enums import NoTradeReason, OrderState, PolicyMode, Side
 from rtds.execution.version import SCHEMA_VERSION
 
@@ -125,6 +130,16 @@ class ExecutableStateView:
     up_spread_abs: Decimal | None = None
     down_spread_abs: Decimal | None = None
     market_actionable_flag: bool = True
+    chainlink_event_ts: datetime | None = None
+    exchange_event_ts: datetime | None = None
+    exchange_trusted_venue_count: int = 0
+    exchange_rejected_venue_count: int = 0
+    open_anchor_present: bool = False
+    composite_nowcast_present: bool = False
+    nowcast_history_length: int = 0
+    volatility_sigma_eff: Decimal | None = None
+    state_invalid_reason: NoTradeReason | None = None
+    state_diagnostics: tuple[str, ...] = ()
     state_fingerprint: str | None = None
     schema_version: str = SCHEMA_VERSION
 
@@ -140,7 +155,12 @@ class ExecutableStateView:
                 field_name,
                 ensure_utc(getattr(self, field_name), field_name=field_name),
             )
-        for field_name in ("quote_event_ts", "quote_recv_ts"):
+        for field_name in (
+            "chainlink_event_ts",
+            "exchange_event_ts",
+            "quote_event_ts",
+            "quote_recv_ts",
+        ):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(
@@ -152,6 +172,12 @@ class ExecutableStateView:
             raise ValueError("seconds_remaining must be non-negative")
         if self.quote_age_ms is not None and self.quote_age_ms < 0:
             raise ValueError("quote_age_ms must be non-negative")
+        if self.exchange_trusted_venue_count < 0:
+            raise ValueError("exchange_trusted_venue_count must be non-negative")
+        if self.exchange_rejected_venue_count < 0:
+            raise ValueError("exchange_rejected_venue_count must be non-negative")
+        if self.nowcast_history_length < 0:
+            raise ValueError("nowcast_history_length must be non-negative")
         for field_name in (
             "fair_value_base",
             "calibrated_fair_value_base",
@@ -169,6 +195,15 @@ class ExecutableStateView:
                     field_name,
                     validate_contract_price(value, field_name=field_name),
                 )
+        if self.volatility_sigma_eff is not None:
+            object.__setattr__(
+                self,
+                "volatility_sigma_eff",
+                validate_volatility(
+                    self.volatility_sigma_eff,
+                    field_name="volatility_sigma_eff",
+                ),
+            )
         for field_name in (
             "up_bid_size_contracts",
             "up_ask_size_contracts",
@@ -186,6 +221,17 @@ class ExecutableStateView:
             self,
             "calibration_support_flag",
             _validate_support_flag(self.calibration_support_flag),
+        )
+        if self.state_invalid_reason is not None:
+            object.__setattr__(
+                self,
+                "state_invalid_reason",
+                NoTradeReason(self.state_invalid_reason),
+            )
+        object.__setattr__(
+            self,
+            "state_diagnostics",
+            tuple(sorted(set(str(item) for item in self.state_diagnostics if str(item).strip()))),
         )
         expected_fingerprint = build_state_fingerprint(self)
         if self.state_fingerprint is not None and self.state_fingerprint != expected_fingerprint:

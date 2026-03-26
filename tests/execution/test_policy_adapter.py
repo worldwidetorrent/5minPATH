@@ -5,7 +5,7 @@ from decimal import Decimal
 from rtds.execution.enums import NoTradeReason, PolicyMode, Side
 from rtds.execution.policy_adapter import PolicyEvaluationInput, evaluate_policy_decision
 from rtds.execution.sizing import SIZE_MODE_FIXED_CONTRACTS, SIZE_MODE_FIXED_NOTIONAL, SizingPolicy
-from tests.execution.support import build_state_view
+from tests.execution.support import build_state_view, replace_state
 
 
 def test_policy_adapter_returns_actionable_shadow_decision() -> None:
@@ -106,3 +106,31 @@ def test_policy_adapter_returns_sizing_zero_for_unpriceable_fixed_notional() -> 
 
     assert decision.eligible is False
     assert decision.primary_decision_reason == NoTradeReason.SIZING_ZERO
+
+
+def test_policy_adapter_propagates_explicit_invalid_state_reason() -> None:
+    decision = evaluate_policy_decision(
+        PolicyEvaluationInput(
+            executable_state=replace_state(
+                build_state_view(fair_value_base=None, calibrated_fair_value_base=None),
+                state_invalid_reason=NoTradeReason.MISSING_COMPOSITE_NOWCAST,
+                composite_nowcast_present=False,
+                nowcast_history_length=0,
+                volatility_sigma_eff=None,
+                state_diagnostics=("missing_composite_nowcast",),
+            ),
+            policy_mode=PolicyMode.BASELINE,
+            sizing_policy=SizingPolicy(
+                size_mode=SIZE_MODE_FIXED_CONTRACTS,
+                fixed_size_contracts=Decimal("10"),
+            ),
+            min_net_edge=Decimal("0.03"),
+            max_quote_age_ms=100,
+            max_spread_abs=Decimal("0.03"),
+            policy_name="good_only_baseline",
+            policy_role="baseline",
+        )
+    )
+
+    assert decision.eligible is False
+    assert decision.primary_decision_reason == NoTradeReason.MISSING_COMPOSITE_NOWCAST

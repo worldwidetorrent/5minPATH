@@ -121,6 +121,18 @@ class PolicyDecision:
 def evaluate_policy_decision(policy_input: PolicyEvaluationInput) -> PolicyDecision:
     """Turn one executable-state row into one deterministic shadow decision."""
 
+    invalid_state_reason = _state_invalid_reason(policy_input.executable_state)
+    if invalid_state_reason is not None:
+        return _build_rejected_policy_decision(
+            policy_input=policy_input,
+            intended_side=None,
+            selected_fair_value_base=_select_fair_value_base(policy_input.executable_state),
+            selected_net_edge=None,
+            requested_size_contracts=Decimal("0"),
+            intended_size_contracts=Decimal("0"),
+            intended_entry_price=None,
+            primary_reason=invalid_state_reason,
+        )
     selected_fair_value = _select_fair_value_base(policy_input.executable_state)
     intended_side, selected_net_edge = _select_side_and_edge(
         executable_state=policy_input.executable_state,
@@ -135,7 +147,8 @@ def evaluate_policy_decision(policy_input: PolicyEvaluationInput) -> PolicyDecis
             requested_size_contracts=Decimal("0"),
             intended_size_contracts=Decimal("0"),
             intended_entry_price=None,
-            primary_reason=NoTradeReason.INVALID_STATE,
+            primary_reason=_state_invalid_reason(policy_input.executable_state)
+            or NoTradeReason.INVALID_STATE,
         )
     preview_context = build_executable_book_context(
         executable_state=policy_input.executable_state,
@@ -205,6 +218,14 @@ def _select_fair_value_base(executable_state: ExecutableStateView) -> Decimal | 
     ):
         return executable_state.calibrated_fair_value_base
     return executable_state.fair_value_base
+
+
+def _state_invalid_reason(executable_state: ExecutableStateView) -> NoTradeReason | None:
+    if executable_state.state_invalid_reason is not None:
+        return executable_state.state_invalid_reason
+    if executable_state.fair_value_base is None:
+        return NoTradeReason.INVALID_STATE
+    return None
 
 
 def _select_side_and_edge(
