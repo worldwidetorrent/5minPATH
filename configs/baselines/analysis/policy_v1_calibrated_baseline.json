@@ -1,10 +1,10 @@
 {
   "analysis_id": "policy-v1-good-only-calibrated-baseline",
-  "description": "Frozen-stack raw-vs-calibrated baseline-only replay across the pinned 6-hour, 12-hour, 20-hour, validation 24-hour, Day 1 24-hour block, and Day 2 24-hour block policy-v1 baselines. This analysis keeps the policy-v1 universe split, admission semantics v2, window-quality classifier v1, stage-1 good-only calibration contract, Chainlink public stream source, and task7 replay assumptions fixed while testing whether the existing calibrator improves baseline-only replay.",
+  "description": "Frozen-stack raw-vs-calibrated baseline-only replay across the pinned 6-hour, 12-hour, 20-hour, validation 24-hour, Day 1 24-hour block, Day 2 24-hour block, and Day 3 24-hour block policy-v1 baselines. This analysis keeps the policy-v1 universe split, admission semantics v2, window-quality classifier v1, stage-1 good-only calibration contract, Chainlink public stream source, and task7 replay assumptions fixed while testing whether the existing calibrator improves baseline-only replay.",
   "cross_horizon_manifest_path": "configs/baselines/analysis/policy_v1_cross_horizon.json",
   "replay_comparison_config_path": "configs/replay/task7_reference_comparison.yaml",
   "calibration_config_path": "configs/replay/calibration_good_only_v1.json",
-  "calibration_summary_path": "artifacts/policy_v1/run_20260325T122110Z/good_only_calibration_summary.json",
+  "calibration_summary_path": "artifacts/policy_v1/run_20260326T151947Z/good_only_calibration_summary.json",
   "baseline_stack_path": "configs/replay/policy_stacks/baseline_only.yaml",
   "policy_decision_path": "docs/decisions/0005_policy_v1_and_admission_v2.md",
   "calibration_decision_path": "docs/decisions/0006_stage1_good_only_calibration.md",
