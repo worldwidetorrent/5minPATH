@@ -23,6 +23,7 @@ from rtds.execution.policy_adapter import (
     evaluate_policy_decision,
 )
 from rtds.execution.sizing import SizingPolicy
+from rtds.execution.summary import reconcile_shadow_summary_from_artifacts
 from rtds.execution.writer import ShadowArtifactWriter
 
 LOGGER = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ class ShadowEngine:
                 if not processed and self.config.idle_sleep_seconds > 0:
                     time.sleep(self.config.idle_sleep_seconds)
         finally:
-            self.flush_summary()
+            self.flush_summary(reconcile_with_disk=True)
             try:
                 self.adapter.close()
             except Exception:
@@ -205,10 +206,17 @@ class ShadowEngine:
             )
             return False
 
-    def flush_summary(self) -> None:
+    def flush_summary(self, *, reconcile_with_disk: bool = False) -> None:
         """Write the current atomic summary snapshot."""
 
-        self.writer.write_shadow_summary(self.ledger.build_summary())
+        summary = self.ledger.build_summary()
+        if reconcile_with_disk:
+            summary = reconcile_shadow_summary_from_artifacts(
+                summary,
+                shadow_decisions_path=self.writer.paths.shadow_decisions_path,
+                shadow_order_states_path=self.writer.paths.shadow_order_states_path,
+            )
+        self.writer.write_shadow_summary(summary)
 
     def _record_policy_decision(
         self,

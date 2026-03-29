@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -72,7 +73,11 @@ def run_shadow_live(args: argparse.Namespace) -> Path:
         args.artifacts_root,
         args.shadow_root,
     )
-    engine.run(max_iterations=args.max_iterations)
+    restore_handlers = _install_shutdown_signal_handlers(engine)
+    try:
+        engine.run(max_iterations=args.max_iterations)
+    finally:
+        restore_handlers()
     return Path(args.shadow_root) / args.session_id
 
 
@@ -146,6 +151,31 @@ def _parse_optional_utc_datetime(value: str | None) -> datetime | None:
     if normalized.endswith("Z"):
         normalized = f"{normalized[:-1]}+00:00"
     return datetime.fromisoformat(normalized)
+
+
+def _install_shutdown_signal_handlers(engine: ShadowEngine):
+    handled_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    previous = {
+        signum: signal.getsignal(signum)
+        for signum in handled_signals
+    }
+
+    def _handle_shutdown_signal(signum, _frame) -> None:
+        LOGGER.warning(
+            "received shutdown signal signum=%s session=%s; requesting graceful shadow stop",
+            signum,
+            engine.config.session_id,
+        )
+        engine.request_stop()
+
+    for signum in handled_signals:
+        signal.signal(signum, _handle_shutdown_signal)
+
+    def _restore_handlers() -> None:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+    return _restore_handlers
 
 
 if __name__ == "__main__":

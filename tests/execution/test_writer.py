@@ -13,6 +13,7 @@ from rtds.execution.reconciler import (
     WindowResolution,
     reconcile_shadow_decisions,
 )
+from rtds.execution.summary import reconcile_shadow_summary_from_artifacts
 from rtds.execution.writer import (
     SHADOW_DECISIONS_FILENAME,
     SHADOW_ORDER_STATES_FILENAME,
@@ -168,3 +169,69 @@ def test_writer_appends_outcomes_and_writes_shadow_vs_replay_summary(tmp_path) -
     assert comparison_payload["decision_count"] == 1
     assert comparison_payload["reconciled_decision_count"] == 1
     assert comparison_payload["replay_expected_pnl"] == "0.4"
+
+
+def test_reconcile_shadow_summary_from_artifacts_uses_jsonl_truth(tmp_path) -> None:
+    writer = ShadowArtifactWriter(
+        session_id="20260326T000000000Z",
+        root_dir=tmp_path / "artifacts/shadow",
+    )
+    ledger = ShadowLedger(
+        session_id="20260326T000000000Z",
+        policy_mode=PolicyMode.BASELINE,
+    )
+    actionable = build_shadow_decision(actionable=True)
+    blocked = build_shadow_decision(
+        actionable=False,
+        state=replace(
+            actionable.executable_state,
+            snapshot_ts=datetime(2026, 3, 26, 0, 0, 1, tzinfo=UTC),
+            state_fingerprint=None,
+        ),
+        intended_side=Side.DOWN,
+        reason=NoTradeReason.EDGE_BELOW_THRESHOLD,
+    )
+
+    writer.append_shadow_order_state(ledger.record_decision_seen(actionable))
+    writer.append_shadow_decision(actionable)
+    writer.append_shadow_order_state(ledger.record_decision_written(actionable))
+
+    writer.append_shadow_order_state(ledger.record_decision_seen(blocked))
+    writer.append_shadow_decision(blocked)
+    writer.append_shadow_order_state(ledger.record_decision_written(blocked))
+
+    stale_summary = actionable_summary = ledger.build_summary()
+    stale_summary = replace(
+        actionable_summary,
+        decision_count=1,
+        actionable_decision_count=1,
+        no_trade_count=0,
+        written_decision_count=1,
+        order_state_transition_count=2,
+        order_state_counts={"eligible_recorded": 2},
+        no_trade_reason_counts={},
+        reject_rate_by_reason={},
+        tradability_pass_rate="1",
+        freshness_pass_rate="1",
+        size_coverage_pass_rate="1",
+        spread_pass_rate="1",
+    )
+
+    reconciled = reconcile_shadow_summary_from_artifacts(
+        stale_summary,
+        shadow_decisions_path=writer.paths.shadow_decisions_path,
+        shadow_order_states_path=writer.paths.shadow_order_states_path,
+    )
+
+    assert reconciled.decision_count == 2
+    assert reconciled.actionable_decision_count == 1
+    assert reconciled.no_trade_count == 1
+    assert reconciled.written_decision_count == 2
+    assert reconciled.order_state_transition_count == 4
+    assert reconciled.order_state_counts == {
+        "eligible_recorded": 2,
+        "no_trade_recorded": 2,
+    }
+    assert reconciled.no_trade_reason_counts == {
+        NoTradeReason.EDGE_BELOW_THRESHOLD.value: 1,
+    }

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 
 from rtds.execution.models import ShadowOutcome, ShadowSummary, ShadowVsReplaySummary
 
@@ -58,6 +62,56 @@ def build_shadow_summary(ledger) -> ShadowSummary:
         first_decision_ts=first_ts,
         last_decision_ts=last_ts,
         max_decision_lag_ms=ledger.max_decision_lag_ms,
+    )
+
+
+def reconcile_shadow_summary_from_artifacts(
+    summary: ShadowSummary,
+    *,
+    shadow_decisions_path: str | Path,
+    shadow_order_states_path: str | Path,
+) -> ShadowSummary:
+    """Rebuild summary counts from durable JSONL artifacts.
+
+    This is intended for final shutdown reconciliation so the summary reflects
+    the append-only files on disk even if in-memory counters lag slightly at
+    termination.
+    """
+
+    decision_stats = _scan_shadow_decisions(Path(shadow_decisions_path))
+    order_state_stats = _scan_shadow_order_states(Path(shadow_order_states_path))
+    decision_count = decision_stats["decision_count"]
+    actionable_count = decision_stats["actionable_decision_count"]
+    no_trade_count = decision_count - actionable_count
+    no_trade_reason_counts = decision_stats["no_trade_reason_counts"]
+    return replace(
+        summary,
+        decision_count=decision_count,
+        actionable_decision_count=actionable_count,
+        no_trade_count=no_trade_count,
+        written_decision_count=decision_count,
+        order_state_transition_count=order_state_stats["order_state_transition_count"],
+        order_state_counts=order_state_stats["order_state_counts"],
+        no_trade_reason_counts=no_trade_reason_counts,
+        reject_rate_by_reason={
+            reason: _rate(count, decision_count)
+            for reason, count in no_trade_reason_counts.items()
+        },
+        tradability_pass_rate=_rate(actionable_count, decision_count),
+        freshness_pass_rate=_rate(
+            decision_stats["freshness_passed_count"],
+            decision_count,
+        ),
+        size_coverage_pass_rate=_rate(
+            decision_stats["size_coverage_passed_count"],
+            decision_count,
+        ),
+        spread_pass_rate=_rate(
+            decision_stats["spread_passed_count"],
+            decision_count,
+        ),
+        first_decision_ts=decision_stats["first_decision_ts"],
+        last_decision_ts=decision_stats["last_decision_ts"],
     )
 
 
@@ -156,7 +210,101 @@ def _outcome_totals(
     return replay_expected_total, shadow_realized_total, divergence_total
 
 
+def _scan_shadow_decisions(path: Path) -> dict[str, object]:
+    decision_count = 0
+    actionable_count = 0
+    freshness_passed_count = 0
+    size_coverage_passed_count = 0
+    spread_passed_count = 0
+    no_trade_reason_counts: dict[str, int] = {}
+    first_decision_ts: datetime | None = None
+    last_decision_ts: datetime | None = None
+    if not path.exists():
+        return {
+            "decision_count": 0,
+            "actionable_decision_count": 0,
+            "freshness_passed_count": 0,
+            "size_coverage_passed_count": 0,
+            "spread_passed_count": 0,
+            "no_trade_reason_counts": {},
+            "first_decision_ts": None,
+            "last_decision_ts": None,
+        }
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            decision_count += 1
+            decision_ts = _parse_decision_ts(row.get("decision_ts"))
+            if decision_ts is not None:
+                if first_decision_ts is None or decision_ts < first_decision_ts:
+                    first_decision_ts = decision_ts
+                if last_decision_ts is None or decision_ts > last_decision_ts:
+                    last_decision_ts = decision_ts
+            tradability = row.get("tradability_check") or {}
+            if tradability.get("is_actionable"):
+                actionable_count += 1
+            else:
+                reason = tradability.get("no_trade_reason")
+                if reason:
+                    no_trade_reason_counts[str(reason)] = (
+                        no_trade_reason_counts.get(str(reason), 0) + 1
+                    )
+            if tradability.get("freshness_passed"):
+                freshness_passed_count += 1
+            if tradability.get("size_coverage_passed"):
+                size_coverage_passed_count += 1
+            if tradability.get("spread_passed"):
+                spread_passed_count += 1
+    return {
+        "decision_count": decision_count,
+        "actionable_decision_count": actionable_count,
+        "freshness_passed_count": freshness_passed_count,
+        "size_coverage_passed_count": size_coverage_passed_count,
+        "spread_passed_count": spread_passed_count,
+        "no_trade_reason_counts": no_trade_reason_counts,
+        "first_decision_ts": first_decision_ts,
+        "last_decision_ts": last_decision_ts,
+    }
+
+
+def _scan_shadow_order_states(path: Path) -> dict[str, object]:
+    counts: dict[str, int] = {}
+    transition_count = 0
+    if not path.exists():
+        return {"order_state_transition_count": 0, "order_state_counts": {}}
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            transition_count += 1
+            order_state = row.get("order_state")
+            if order_state:
+                key = str(order_state)
+                counts[key] = counts.get(key, 0) + 1
+    return {
+        "order_state_transition_count": transition_count,
+        "order_state_counts": counts,
+    }
+
+
+def _parse_decision_ts(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    return datetime.fromisoformat(normalized)
+
+
 __all__ = [
     "build_shadow_summary",
     "build_shadow_vs_replay_summary",
+    "reconcile_shadow_summary_from_artifacts",
 ]
