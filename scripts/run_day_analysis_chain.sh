@@ -191,6 +191,25 @@ entry = {
     },
 }
 
+shadow_summary_path = Path(f"artifacts/shadow/{session_id}/shadow_summary.json")
+entry["capture_valid"] = (
+    summary["session_diagnostics"]["termination_reason"] == "completed"
+    and admission["family_validation"]["off_family_switch_count"] == 0
+    and admission["mapping_and_anchor"]["selected_binding_unresolved_window_count"] == 0
+)
+entry["shadow_clean_baseline"] = None
+entry["shadow_reason"] = None
+if shadow_summary_path.exists():
+    shadow_summary = json.loads(shadow_summary_path.read_text(encoding="utf-8"))
+    shadow_reason = None
+    if (
+        shadow_summary.get("no_trade_reason_counts", {}).get("future_state_leak_detected", 0) > 0
+    ):
+        shadow_reason = "future_state_leak_detected"
+    entry["shadow_clean_baseline"] = shadow_reason is None
+    entry["shadow_reason"] = shadow_reason
+    entry["artifact_paths"]["shadow_summary_path"] = str(shadow_summary_path)
+
 tracker_json_path.parent.mkdir(parents=True, exist_ok=True)
 tracker_json_path.write_text(json.dumps(entry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 with tracker_jsonl_path.open("a", encoding="utf-8", newline="\n") as handle:
