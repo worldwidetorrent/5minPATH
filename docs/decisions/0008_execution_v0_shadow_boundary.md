@@ -71,6 +71,9 @@ Emission cadence is also frozen:
 - freshest available Chainlink and exchange state are merged into that decision-time row
 - duplicate state rows are suppressed by `state_fingerprint` and stable decision identity
 - rows that cannot support tradability checks are skipped rather than emitted as partial executable states
+- Polymarket rows must not become visible to the live adapter before their `recv_ts`; if a
+  Polymarket row has `event_ts <= decision_ts` but `recv_ts > decision_ts`, it must stay buffered
+  for a later sample
 
 The capture-output live-state adapter also maintains one latest-known in-memory state
 surface rather than rebuilding from scratch on each loop. That cache is frozen to:
@@ -131,6 +134,12 @@ Wave-two evidence logic lives in:
 - [`src/rtds/execution/ledger.py`](/home/ubuntu/testingproject/src/rtds/execution/ledger.py)
 - [`src/rtds/execution/summary.py`](/home/ubuntu/testingproject/src/rtds/execution/summary.py)
 - [`src/rtds/execution/reconciler.py`](/home/ubuntu/testingproject/src/rtds/execution/reconciler.py)
+
+Observed baseline state after adoption:
+- Day 4 established the first clean live-forward shadow baseline
+- Day 5 capture remained valid, but its paired shadow run is historically quarantined because
+  `future_state_leak_detected` exposed a Polymarket recv-time visibility bug before the patch above
+- the main remaining execution-side bottleneck is live composite availability, not runtime safety
 
 ## Consequences
 

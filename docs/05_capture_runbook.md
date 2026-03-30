@@ -234,17 +234,32 @@ That command writes:
 
 ## Pinned baseline sessions
 
-The current Task 7 reference sessions are:
+The current pinned capture baselines are:
 
 - [`20260316T101341416Z`](/home/ubuntu/testingproject/docs/baselines/20260316T101341416Z.md)
 - [`20260317T033427850Z`](/home/ubuntu/testingproject/docs/baselines/20260317T033427850Z.md)
+- [`20260320T071726065Z`](/home/ubuntu/testingproject/docs/baselines/20260320T071726065Z.md)
+- [`20260321T131012752Z`](/home/ubuntu/testingproject/docs/baselines/20260321T131012752Z.md)
+- [`20260324T040815584Z`](/home/ubuntu/testingproject/docs/baselines/20260324T040815584Z.md)
+- [`20260325T052115572Z`](/home/ubuntu/testingproject/docs/baselines/20260325T052115572Z.md)
+- [`20260326T055920480Z`](/home/ubuntu/testingproject/docs/baselines/20260326T055920480Z.md)
+- [`20260327T093850581Z`](/home/ubuntu/testingproject/docs/baselines/20260327T093850581Z.md)
+- [`20260329T002704901Z`](/home/ubuntu/testingproject/docs/baselines/20260329T002704901Z.md)
+
+The original Task 7 reference bundle is still documented here:
+
 - [`Task 7 Reference Inputs`](/home/ubuntu/testingproject/docs/baselines/task7_reference_inputs.md)
 
 The current semantic freeze for promotion to `main` is:
 
 - [`0005 Policy V1 And Admission V2`](/home/ubuntu/testingproject/docs/decisions/0005_policy_v1_and_admission_v2.md)
 
-The machine-readable manifest tying both sessions to one comparison contract is:
+The current machine-readable cross-horizon analysis manifests are:
+
+- [`configs/baselines/analysis/policy_v1_cross_horizon.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_cross_horizon.json)
+- [`configs/baselines/analysis/policy_v1_calibrated_baseline.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_calibrated_baseline.json)
+
+The older Task 7 manifest remains here for the original pinned comparison slice:
 
 - [`configs/baselines/analysis/task7_reference_runs.json`](/home/ubuntu/testingproject/configs/baselines/analysis/task7_reference_runs.json)
 

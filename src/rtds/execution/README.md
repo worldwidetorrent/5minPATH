@@ -93,6 +93,8 @@ Emission cadence is frozen to:
 - duplicate emissions suppressed by `state_fingerprint` and decision identity
 - rows that cannot support tradability checks are skipped rather than emitted as partial executable states
 - malformed appended rows remain fail-open and do not affect capture ownership, but they now surface as shadow-side soft-error counts for runtime visibility
+- Polymarket rows now become visible to the live adapter only once `recv_ts <= decision_ts`; if
+  `recv_ts` is absent, visibility falls back to the older timestamp rule
 
 Current in-memory live-state cache surface:
 - latest Chainlink tick
@@ -131,6 +133,13 @@ Current shadow-live composite policy is intentionally shadow-only:
 
 This does not change replay semantics, capture semantics, or policy semantics. It
 exists only to make the live shadow sidecar diagnostic path honest and usable.
+
+Current evidence status:
+- Day 4 is the first clean live-forward shadow baseline session
+- Day 5 shadow remains historically quarantined because `future_state_leak_detected` appeared
+  before the Polymarket recv-time visibility patch
+- current live composite bottleneck remains sparse `3`-trusted-venue formation, driven mainly by
+  Binance outlier rejection rather than downstream tradability logic
 
 Input-surface freeze for v0:
 - no second truth source beyond those normalized session-scoped capture outputs

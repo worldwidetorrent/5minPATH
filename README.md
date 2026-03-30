@@ -38,18 +38,36 @@ Implemented on `main`:
 - policy-v1 replay stacks and cross-horizon comparison across pinned sessions
 - first serious policy-v1 report plus stage-1 coarse `good_only` calibration with uncertainty and support flags
 - frozen raw-vs-calibrated `baseline_only` replay comparison across the pinned 6-hour, 12-hour, 20-hour, and 24-hour sessions
-- execution-v0 shadow-sidecar boundaries plus a production-safe capture-output `live_state` adapter, frozen book-pricing, tradability, policy-decision, simple sizing, append-only shadow evidence, structured summary metrics, reconciliation outputs, and a minimal fail-open shadow runtime
+- execution-v0 shadow-sidecar boundaries plus a production-safe capture-output `live_state` adapter, frozen book-pricing, tradability, policy-decision, simple sizing, append-only shadow evidence, structured summary metrics, reconciliation outputs, and a live-forward fail-open shadow runtime
 - a thin shadow launcher now exists to attach the execution sidecar to one active capture session without capture-side code changes
 
 Not yet implemented end to end:
 
 - dedicated `build_snapshots` CLI is still a placeholder
 - raw event schemas are still conceptual rather than fully implemented in code
-- live shadow execution runtime is not implemented end to end; a minimal fail-open engine loop, production capture-output `live_state` adapter, and shadow artifact writer exist, but there is still no websocket market-data path or authenticated execution path
+- the production live shadow path is implemented only for the capture-output `live_state` adapter boundary; there is still no websocket market-data path or authenticated execution path
 - the full intended streaming collector fleet is not implemented; the current capture path is a bounded public-endpoint snapshot session rather than a continuously running service
 - most downstream admission and replay logic still expects curated day partitions rather than a continuously running ingestion service
 
 When the code is narrower than the design described below, the design should be read as the intended architecture and the narrower implementation as the current phase-1 state.
+
+### Current execution-side evidence state
+
+The execution sidecar is no longer just an interface freeze. The repo now has:
+
+- a production-safe capture-output `live_state` adapter
+- a live-forward shadow launcher
+- append-only shadow decisions, order-state transitions, outcomes, and replay-comparison artifacts
+- shutdown reconciliation for shadow summaries
+- the first clean live-forward shadow baseline day on Day 4
+
+Current baseline interpretation:
+
+- Day 4 is the first clean live-forward shadow baseline day
+- Day 5 capture is valid, but Day 5 shadow remains quarantined as historical evidence because `future_state_leak_detected` appeared on 46 rows before the recv-time visibility fix
+- the Day 5 leak was traced to Polymarket row visibility using `event_ts` before `recv_ts`; that narrow edge case is now patched on `main`
+
+So the current open execution-side problem is no longer runtime isolation. It is live composite availability, dominated by Binance outlier rejection during weak hours.
 
 ### Current phase-1 deviation from target design
 
