@@ -383,38 +383,38 @@ def test_capture_output_adapter_skips_non_success_and_partial_polymarket_rows(tm
 
     assert adapter.read_state() is None
 
-    _append_jsonl(
-        tmp_path
-        / (
-            "data/normalized/polymarket_quotes/"
-            f"date=2026-03-26/session={session_id}/part-00000.jsonl"
-        ),
-        [
+
+def test_capture_output_adapter_waits_for_polymarket_recv_ts_before_emitting(tmp_path) -> None:
+    session_id = "20260326T010000000Z"
+    _write_fixture_session(
+        tmp_path,
+        session_id=session_id,
+        polymarket_rows=[
             {
                 "venue_id": "polymarket",
                 "market_id": "0xmarket",
                 "asset_id": "BTC",
-                "event_ts": "2026-03-26T01:00:06Z",
+                "event_ts": "2026-03-26T01:00:05Z",
                 "recv_ts": "2026-03-26T01:00:06Z",
                 "proc_ts": "2026-03-26T01:00:06Z",
-                "up_bid": "0.61",
-                "up_ask": "0.63",
-                "down_bid": "0.37",
-                "down_ask": "0.39",
-                "up_bid_size_contracts": "55",
-                "up_ask_size_contracts": "0",
-                "down_bid_size_contracts": "55",
-                "down_ask_size_contracts": "44",
-                "raw_event_id": "rawpoly:2",
+                "up_bid": "0.58",
+                "up_ask": "0.60",
+                "down_bid": "0.40",
+                "down_ask": "0.42",
+                "up_bid_size_contracts": "50",
+                "up_ask_size_contracts": "40",
+                "down_bid_size_contracts": "50",
+                "down_ask_size_contracts": "40",
+                "raw_event_id": "rawpoly:1",
                 "normalizer_version": "0.1.0",
                 "schema_version": "0.1.0",
                 "created_ts": "2026-03-26T01:00:06Z",
                 "token_yes_id": "up-token",
                 "token_no_id": "down-token",
                 "market_quote_type": "orderbook_top",
-                "quote_sequence_id": "seq-2",
-                "market_mid_up": "0.62",
-                "market_mid_down": "0.38",
+                "quote_sequence_id": "seq-1",
+                "market_mid_up": "0.59",
+                "market_mid_down": "0.41",
                 "market_spread_up_abs": "0.02",
                 "market_spread_down_abs": "0.02",
                 "last_trade_price": None,
@@ -428,11 +428,23 @@ def test_capture_output_adapter_skips_non_success_and_partial_polymarket_rows(tm
                 "normalization_status": "normalized",
             }
         ],
-    )
-    _append_jsonl(
-        tmp_path
-        / f"artifacts/collect/date=2026-03-26/session={session_id}/sample_diagnostics.jsonl",
-        [
+        sample_rows=[
+            {
+                "sample_index": 1,
+                "sample_started_at": "2026-03-26T01:00:05.000Z",
+                "sample_status": "healthy",
+                "degraded_sources": [],
+                "selected_market_id": "0xmarket",
+                "selected_market_slug": "btc-updown-5m-1770000600",
+                "selected_window_id": "btc-5m-20260326T010000Z",
+                "source_results": {
+                    "chainlink": {"status": "success", "details": {"fallback_used": False}},
+                    "polymarket_quotes": {
+                        "status": "success",
+                        "details": {"seconds_remaining": 295},
+                    },
+                },
+            },
             {
                 "sample_index": 2,
                 "sample_started_at": "2026-03-26T01:00:06.000Z",
@@ -448,11 +460,22 @@ def test_capture_output_adapter_skips_non_success_and_partial_polymarket_rows(tm
                         "details": {"seconds_remaining": 294},
                     },
                 },
-            }
+            },
         ],
     )
+    adapter = CaptureOutputLiveStateAdapter(
+        CaptureOutputLiveStateConfig(
+            session_id=session_id,
+            normalized_root=tmp_path / "data/normalized",
+            artifacts_root=tmp_path / "artifacts/collect",
+        )
+    )
 
-    assert adapter.read_state() is not None
+    state = adapter.read_state()
+
+    assert state is not None
+    assert state.snapshot_ts == parse_utc("2026-03-26T01:00:06Z")
+    assert state.quote_recv_ts == parse_utc("2026-03-26T01:00:06Z")
 
 
 def test_capture_output_adapter_reports_soft_tail_errors(tmp_path, caplog) -> None:

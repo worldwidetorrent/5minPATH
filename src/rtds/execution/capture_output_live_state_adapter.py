@@ -233,7 +233,7 @@ class CaptureOutputLiveStateAdapter(ExecutionStateAdapter):
             self._assembler.ingest_exchange_row(self._pending_exchange_rows.popleft())
         while (
             self._pending_polymarket_rows
-            and _row_ts(self._pending_polymarket_rows[0]) <= sample_ts
+            and _polymarket_row_visible_ts(self._pending_polymarket_rows[0]) <= sample_ts
         ):
             self._assembler.ingest_polymarket_row(self._pending_polymarket_rows.popleft())
 
@@ -267,6 +267,13 @@ def _row_ts(row: dict[str, Any]):
         if value is not None:
             return parse_utc(str(value))
     raise ValueError(f"row is missing timestamp fields: {sorted(row)}")
+
+
+def _polymarket_row_visible_ts(row: dict[str, Any]):
+    recv_ts = row.get("recv_ts")
+    if recv_ts is not None:
+        return parse_utc(str(recv_ts))
+    return _row_ts(row)
 
 
 __all__ = [
