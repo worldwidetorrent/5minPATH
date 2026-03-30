@@ -16,7 +16,7 @@ The repo already has:
 - a stable policy-v1 universe split
 - a frozen stage-1 `good_only` calibrator
 
-What it does not yet have is a frozen execution-side boundary. Without that, live shadow work could easily blur:
+At the time of this decision, what the repo did not yet have was a frozen execution-side boundary. Without that, live shadow work could easily blur:
 - production vs replay adapters
 - capture vs shadow runtime ownership
 - normalized internal execution state vs raw venue payloads

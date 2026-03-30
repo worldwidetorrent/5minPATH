@@ -44,3 +44,12 @@ mixing structurally different window types.
   which applies bucket corrections only where support is `sufficient`.
 - Future calibration refreshes should add clean `good` windows without redefining the
   regime map by default.
+
+## Post-decision state
+
+Later refreshes through the daily block sessions strengthened this contract rather than weakening it:
+
+- all five coarse buckets are now `sufficient`
+- the calibrator has remained economically meaningful across the later 24-hour runs
+- the main open question is execution realism and stability by session, not whether the coarse
+  `good_only` calibrator should exist at all

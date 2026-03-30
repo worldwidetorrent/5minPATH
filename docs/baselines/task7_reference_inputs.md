@@ -1,6 +1,12 @@
 # Task 7 Reference Inputs
 
-This note freezes the sanctioned inputs for Task 7 degraded-regime analysis.
+This note freezes the sanctioned inputs for the original Task 7 degraded-regime analysis tranche.
+
+It is now a historical early-tranche reference, not the current top-level policy-v1 baseline
+contract. The active cross-horizon and calibrated-baseline manifests live in:
+
+- [`configs/baselines/analysis/policy_v1_cross_horizon.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_cross_horizon.json)
+- [`configs/baselines/analysis/policy_v1_calibrated_baseline.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_calibrated_baseline.json)
 
 ## Goal
 

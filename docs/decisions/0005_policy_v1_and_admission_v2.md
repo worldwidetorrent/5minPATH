@@ -98,4 +98,9 @@ Negative:
 
 ## Revisit
 
-Revisit this decision after the refreshed calibration/report pass with the 24-hour session included, or earlier if a later replay comparison overturns the current regime map.
+The originally planned 24-hour refresh has already happened, followed by the Day 1 through Day 5
+block sessions. Those later runs strengthened calibration support and did not overturn the frozen
+regime map, so this decision remains in force.
+
+Revisit only if a later replay comparison or execution-side evidence overturns the current regime
+ordering rather than merely refining calibration or live tradability diagnostics.

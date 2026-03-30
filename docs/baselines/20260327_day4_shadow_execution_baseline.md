@@ -71,4 +71,5 @@ There is a small shutdown accounting mismatch:
 - [`shadow_summary.json`](/home/ubuntu/testingproject/artifacts/shadow/20260327T093850581Z/shadow_summary.json) reports `50900` decisions
 - [`shadow_decisions.jsonl`](/home/ubuntu/testingproject/artifacts/shadow/20260327T093850581Z/shadow_decisions.jsonl) contains `50920` rows
 
-Treat the JSONL row counts as the authoritative Day 4 execution baseline until the shadow summary shutdown reconciliation is tightened.
+Treat the JSONL row counts as the authoritative Day 4 execution baseline because this historical
+session predates the shutdown reconciliation fix that later landed on `main`.
