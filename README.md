@@ -74,7 +74,7 @@ So the current open execution-side problem is no longer runtime isolation. It is
 The original architecture still matters and remains the north star. The current capture implementation deviates from it in a few deliberate ways:
 
 - It uses a bounded orchestration session instead of long-running collectors. Reason: the immediate success metric is to prove the repo can land coherent real files in a controlled smoke-test window before expanding to full-day operations.
-- It uses public REST snapshots for Binance.US, Coinbase, Kraken, and Polymarket, and now prefers the public delayed Chainlink Data Streams BTC/USD endpoint with `latestRoundData` only as fallback. Reason: the public stream endpoint is the first official Chainlink source in this repo that is actually boundary-usable under the current anchor policy, while the old RPC snapshot path remains useful for continuity when the stream endpoint is unavailable.
+- It uses public REST snapshots for Binance, Coinbase, Kraken, and Polymarket, and now prefers the public delayed Chainlink Data Streams BTC/USD endpoint with `latestRoundData` only as fallback. Reason: the public stream endpoint is the first official Chainlink source in this repo that is actually boundary-usable under the current anchor policy, while the old RPC snapshot path remains useful for continuity when the stream endpoint is unavailable.
 - Polymarket metadata discovery currently pulls from the `up-or-down` event feed rather than the broader market search surface. Reason: that feed exposes the recurring BTC 5-minute family densely enough to admit the exact target strip without scanning thousands of unrelated events first.
 - The live selector now admits only exact BTC 5-minute family candidates and binds them to canonical `window_id`s before quote capture. Reason: the repo’s canonical grammar treats `window_id` as primary and market binding as a downstream step, so live capture now follows that same contract.
 - During bounded sessions, quote capture can roll between admitted family members as the live 5-minute window advances. Reason: the target family is recurring, so a 10-minute smoke run must stay on the same family while moving from one canonical window to the next.
@@ -95,7 +95,7 @@ The original architecture still matters and remains the north star. The current 
 - The focused degraded follow-up on the pinned 12-hour session now stress-tests `degraded_light_only` and `degraded_medium_only` under `baseline`, `1.5x slippage`, `2x slippage`, and `half_size`, and decomposes both regimes by `seconds_remaining_bucket`, `volatility_regime`, `spread_bucket`, `raw_edge_bucket`, `net_edge_bucket`, and `chainlink_confidence_state`. Reason: the current question is no longer whether degraded windows exist, but whether `degraded_medium` is a real regime and where its economics actually come from. The current result is that `degraded_medium` survives slippage stress but clusters in stronger-edge, wider-spread, and mid/high-volatility slices, so it remains exploratory and context-gated rather than baseline-admitted.
 - Admission semantics are now `v2`: session-level continuity and snapshot eligibility determine whether a run is structurally usable, while window-level verdicts determine what can actually enter replay and policy extraction. The old blunt degraded-count result is preserved as `legacy_verdict` for comparison. Reason: the pinned 6-hour, 12-hour, and 20-hour sessions all showed that session-wide rejection was too blunt once family continuity, oracle continuity, exchange continuity, and snapshot eligibility were already strong.
 - The first window-aware policy stack is now encoded in replay configs: baseline `good` windows only, exploratory `degraded_light` overlay, and tightly gated `degraded_medium` overlay for `large_positive_edge`, `mid/high_vol`, and `wide_spread` slices. Reason: policy-stack replay across the pinned 6-hour, 12-hour, and 20-hour sessions confirmed that the good-window baseline remains the clean extraction universe, while degraded overlays add narrower exploratory flow rather than a new merged default universe.
-- The formal policy-v1 cross-horizon contract is now pinned in [`configs/baselines/analysis/policy_v1_cross_horizon.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_cross_horizon.json), and the consolidated comparison can be regenerated with `python -m rtds.cli.compare_policy_horizons`. Reason: the next question is no longer per-session viability, but whether the same three sanctioned stacks preserve or change their shape across the 6-hour, 12-hour, 20-hour, and 24-hour baselines.
+- The formal policy-v1 cross-horizon contract is now pinned in [`configs/baselines/analysis/policy_v1_cross_horizon.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_cross_horizon.json), and the consolidated comparison can be regenerated with `python -m rtds.cli.compare_policy_horizons`. Reason: the next question is no longer per-session viability, but whether the same three sanctioned stacks preserve or change their shape across the early 6-hour/12-hour/20-hour/validation baselines and the later daily block sessions.
 - The first serious policy-v1 report and the first stage-1 `good_only` calibration pass can now be regenerated with `python -m rtds.cli.build_policy_v1_baseline`. Reason: the policy structure is no longer provisional, so the repo now needs one formal report plus one uncertainty-aware baseline calibration artifact instead of only scattered comparison summaries.
 - The frozen raw-vs-calibrated `baseline_only` replay contract is now pinned in [`configs/baselines/analysis/policy_v1_calibrated_baseline.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_calibrated_baseline.json), and the comparison can be regenerated with `python -m rtds.cli.compare_calibrated_baseline`. Reason: the next diagnostic question is whether the current `good_only` calibrator actually improves baseline replay when applied only to buckets with sufficient support.
 - The active semantic freeze is recorded in [`docs/decisions/0005_policy_v1_and_admission_v2.md`](/home/ubuntu/testingproject/docs/decisions/0005_policy_v1_and_admission_v2.md). Reason: `policy v1` and `admission semantics v2` are now live on `main`, so the repo needs one explicit decision record rather than only scattered baseline notes.
@@ -662,7 +662,7 @@ If it cannot, even a clever formula is decorative.
 
 ## 18. Current status
 
-Current status: **policy-v1 and long-run validation phase**.
+Current status: **policy-v1, long-run capture, and execution-side validation phase**.
 
 Implemented:
 
@@ -673,17 +673,17 @@ Implemented:
 - snapshot assembly, labeling, simulation, slice analysis, and session-scoped replay
 - bounded and long-run capture resilience, partial-session artifacts, and replay-admission summaries
 - window-aware admission semantics `v2`
-- policy-v1 replay stacks with pinned 6-hour, 12-hour, 20-hour, and 24-hour baselines
+- policy-v1 replay stacks with pinned early baselines plus the later daily block sessions
 - first serious policy-v1 report, stage-1 coarse `good_only` calibration, and frozen raw-vs-calibrated baseline comparison
 - ADRs for window IDs, composite method, snapshot cadence, oracle source, policy v1, and stage-1 calibration
 
 Immediate next work:
 
-- diagnose the raw-vs-calibrated `baseline_only` split now that the 24-hour session is included
-- decide whether the current stage-1 calibrator should stay bucket-constant or become more conservative in the shoulders
-- check whether `near_mid` still needs more clean `good` windows before any stronger baseline calibrator is justified
-- decide whether the next calibration pass stays `good_only`-only or needs a guarded `good + degraded_light` experiment
-- write the next policy report from the pinned 6h/12h/20h/24h calibrated baseline evidence
+- finish the current daily capture-analysis cadence while keeping policy-v1 and admission-v2 frozen
+- continue execution-side validation with live-forward shadow sessions after the Day 5 recv-time leak fix
+- measure whether Day 4-style actionable patterns repeat on later days under the fixed shadow path
+- keep the historical Day 5 shadow quarantined while using Day 4 as the clean live-forward baseline
+- continue diagnosing live composite scarcity, especially Binance outlier behavior during weak hours
 
 ---
 
