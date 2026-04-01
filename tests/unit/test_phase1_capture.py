@@ -21,6 +21,7 @@ from rtds.collectors.phase1_capture import (
     _build_polymarket_quote_payload,
     _collect_chainlink_stream_tick,
     _collect_chainlink_ticks,
+    _collect_exchange_quotes,
     _collect_polymarket_metadata,
     _decode_latest_round_data,
     _run_with_retries,
@@ -1077,6 +1078,66 @@ def test_run_with_retries_allows_http_payload_with_empty_error_list() -> None:
 
     assert result.status == "success"
     assert result.payload == {"error": [], "result": {"ok": True}}
+
+
+def test_collect_exchange_quotes_degrades_when_kraken_payload_is_missing_result(
+    monkeypatch,
+) -> None:
+    def fake_http_json(url, **kwargs):
+        if "binance" in url:
+            payload = {
+                "symbol": "BTCUSDT",
+                "bidPrice": "70500.10",
+                "askPrice": "70500.20",
+                "bidQty": "1.25",
+                "askQty": "1.50",
+            }
+        elif "coinbase" in url:
+            payload = {
+                "bids": [["70500.10", "1.25"]],
+                "asks": [["70500.20", "1.50"]],
+                "time": "2026-03-15T00:01:03.155Z",
+                "sequence": 12345,
+            }
+        else:
+            payload = {"error": ["EGeneral:Temporary lockout"]}
+        return FetchResult(
+            status="success",
+            payload=payload,
+            attempts=1,
+            retries=0,
+            http_status=200,
+            retryable=False,
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr("rtds.collectors.phase1_capture._http_json", fake_http_json)
+
+    result = _collect_exchange_quotes(
+        Phase1CaptureConfig(
+            data_root=Path("data"),
+            artifacts_root=Path("artifacts"),
+            logs_root=Path("logs"),
+            temp_root=Path("tmp"),
+            session_id="test-session",
+        ),
+        logger=_logger(),
+    )
+
+    assert result.status == "degraded_partial"
+    assert len(result.normalized_rows) == 2
+    assert sorted(quote.venue_id for quote in result.normalized_rows) == ["binance", "coinbase"]
+    assert result.failure_class == "payload_shape_invalid"
+    assert result.failure_type == "KeyError"
+    assert result.details["venue_statuses"]["kraken"] == "terminal_failure"
+    kraken_failure_row = next(row for row in result.raw_rows if row["venue_id"] == "kraken")
+    assert kraken_failure_row["source_type"] == "capture_failure"
+    assert kraken_failure_row["failure_type"] == "KeyError"
+    assert kraken_failure_row["details"]["payload_type"] == "dict"
+    assert kraken_failure_row["details"]["payload_keys"] == ["error"]
+    assert kraken_failure_row["details"]["raw_payload"] == {
+        "error": ["EGeneral:Temporary lockout"]
+    }
 
 
 def test_run_phase1_capture_refreshes_polymarket_binding_on_rollover_404(

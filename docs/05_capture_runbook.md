@@ -130,6 +130,7 @@ Crash-safe session checkpointing:
 - lifecycle states are explicit and machine-readable: `running`, `degraded`, `completed`, `failed_cleanly`, `aborted_watchdog`, `aborted_source_failure`
 - the collector now emits periodic heartbeat log lines and aborts with `aborted_watchdog` if no sample completes within the configured forward-progress watchdog window
 - repeated Chainlink network failure is now bounded by both request retry/backoff and a run-level circuit breaker; it either recovers or terminates cleanly instead of running as a zombie session
+- malformed per-venue exchange payloads now degrade the exchange source and preserve payload-shape diagnostics in raw failure rows instead of aborting the full session on an uncaught parser error
 
 ## Output layout
 

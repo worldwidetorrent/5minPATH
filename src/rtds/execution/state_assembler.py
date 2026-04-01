@@ -203,7 +203,13 @@ class CaptureOutputStateAssembler:
             if derived_state.current_oracle_tick is None
             else derived_state.current_oracle_tick.event_ts
         )
+        chainlink_recv_ts = (
+            None
+            if derived_state.current_oracle_tick is None
+            else derived_state.current_oracle_tick.recv_ts
+        )
         exchange_event_ts = _max_exchange_event_ts(self.state_cache.latest_exchange_by_venue)
+        exchange_recv_ts = _max_exchange_recv_ts(self.state_cache.latest_exchange_by_venue)
         exchange_diagnostics = _build_exchange_venue_diagnostics(
             self.state_cache.latest_exchange_by_venue,
             decision_ts=sample_ts,
@@ -257,7 +263,9 @@ class CaptureOutputStateAssembler:
             decision_ts=sample_ts,
             polymarket_quote=polymarket_quote,
             chainlink_event_ts=chainlink_event_ts,
+            chainlink_recv_ts=chainlink_recv_ts,
             exchange_event_ts=exchange_event_ts,
+            exchange_recv_ts=exchange_recv_ts,
             quote_event_ts=quote_event_ts,
             quote_recv_ts=quote_recv_ts,
             open_anchor_present=open_anchor_present,
@@ -464,6 +472,12 @@ def _max_exchange_event_ts(exchange_by_venue: dict[str, ExchangeQuote]) -> datet
     return max(quote.event_ts for quote in exchange_by_venue.values())
 
 
+def _max_exchange_recv_ts(exchange_by_venue: dict[str, ExchangeQuote]) -> datetime | None:
+    if not exchange_by_venue:
+        return None
+    return max(quote.recv_ts for quote in exchange_by_venue.values())
+
+
 @dataclass(slots=True, frozen=True)
 class ExchangeVenueDiagnostics:
     present_by_venue: dict[str, bool]
@@ -585,12 +599,12 @@ def _shadow_live_composite_quote_eligibility(
     *,
     decision_ts: datetime,
 ) -> ShadowLiveCompositeQuoteEligibility:
-    if quote.event_ts > decision_ts or quote.recv_ts > decision_ts:
+    if quote.recv_ts > decision_ts:
         return ShadowLiveCompositeQuoteEligibility(
             adapted_quote=None,
             quote_valid_for_composite=False,
-            quote_invalid_reason="future_source_ts",
-            eligibility_reason="future_source_ts",
+            quote_invalid_reason="future_recv_visibility_leak",
+            eligibility_reason="future_recv_visibility_leak",
         )
     if quote.crossed_market_flag:
         return ShadowLiveCompositeQuoteEligibility(
@@ -609,22 +623,23 @@ def _shadow_live_composite_quote_eligibility(
             eligibility_reason="normalization_status_excluded",
         )
 
-    event_freshness = assess_source_freshness(
-        quote.venue_id,
-        as_of_ts=decision_ts,
-        last_event_ts=quote.event_ts,
-        policy=SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY,
-    )
-    if (
-        event_freshness.last_event_age_ms is not None
-        and event_freshness.last_event_age_ms > SHADOW_LIVE_EVENT_AGE_HARD_CAP_MS
-    ):
-        return ShadowLiveCompositeQuoteEligibility(
-            adapted_quote=None,
-            quote_valid_for_composite=False,
-            quote_invalid_reason="event_age_hard_cap_exceeded",
-            eligibility_reason="event_age_hard_cap_exceeded",
+    if quote.event_ts <= decision_ts:
+        event_freshness = assess_source_freshness(
+            quote.venue_id,
+            as_of_ts=decision_ts,
+            last_event_ts=quote.event_ts,
+            policy=SHADOW_LIVE_COMPOSITE_FRESHNESS_POLICY,
         )
+        if (
+            event_freshness.last_event_age_ms is not None
+            and event_freshness.last_event_age_ms > SHADOW_LIVE_EVENT_AGE_HARD_CAP_MS
+        ):
+            return ShadowLiveCompositeQuoteEligibility(
+                adapted_quote=None,
+                quote_valid_for_composite=False,
+                quote_invalid_reason="event_age_hard_cap_exceeded",
+                eligibility_reason="event_age_hard_cap_exceeded",
+            )
 
     recv_freshness = assess_source_freshness(
         quote.venue_id,
@@ -665,7 +680,9 @@ def _state_invalid_reason(
     decision_ts: datetime,
     polymarket_quote: PolymarketQuote | None,
     chainlink_event_ts: datetime | None,
+    chainlink_recv_ts: datetime | None,
     exchange_event_ts: datetime | None,
+    exchange_recv_ts: datetime | None,
     quote_event_ts: datetime | None,
     quote_recv_ts: datetime | None,
     open_anchor_present: bool,
@@ -680,15 +697,30 @@ def _state_invalid_reason(
         diagnostics.extend(volatility.diagnostics)
     diagnostics.extend(fair_value_diagnostics)
 
-    if _future_source_leak_detected(
+    recv_visibility_diagnostics = _future_recv_visibility_diagnostics(
+        decision_ts=decision_ts,
+        chainlink_recv_ts=chainlink_recv_ts,
+        exchange_recv_ts=exchange_recv_ts,
+        quote_recv_ts=quote_recv_ts,
+    )
+    if recv_visibility_diagnostics:
+        diagnostics.extend(recv_visibility_diagnostics)
+        diagnostics.append(NoTradeReason.FUTURE_RECV_VISIBILITY_LEAK.value)
+        return NoTradeReason.FUTURE_RECV_VISIBILITY_LEAK, tuple(sorted(set(diagnostics)))
+
+    event_clock_skew_diagnostics = _future_event_clock_skew_diagnostics(
         decision_ts=decision_ts,
         chainlink_event_ts=chainlink_event_ts,
+        chainlink_recv_ts=chainlink_recv_ts,
         exchange_event_ts=exchange_event_ts,
+        exchange_recv_ts=exchange_recv_ts,
         quote_event_ts=quote_event_ts,
         quote_recv_ts=quote_recv_ts,
-    ):
-        diagnostics.append(NoTradeReason.FUTURE_STATE_LEAK_DETECTED.value)
-        return NoTradeReason.FUTURE_STATE_LEAK_DETECTED, tuple(sorted(set(diagnostics)))
+    )
+    if event_clock_skew_diagnostics:
+        diagnostics.extend(event_clock_skew_diagnostics)
+        diagnostics.append(NoTradeReason.FUTURE_EVENT_CLOCK_SKEW.value)
+        return NoTradeReason.FUTURE_EVENT_CLOCK_SKEW, tuple(sorted(set(diagnostics)))
 
     if polymarket_quote is None or _missing_quote_fields(polymarket_quote):
         diagnostics.append(NoTradeReason.MISSING_QUOTE_FIELDS.value)
@@ -726,23 +758,89 @@ def _state_invalid_reason(
     return None, tuple(sorted(set(diagnostics)))
 
 
-def _future_source_leak_detected(
+def _future_recv_visibility_diagnostics(
+    *,
+    decision_ts: datetime,
+    chainlink_recv_ts: datetime | None,
+    exchange_recv_ts: datetime | None,
+    quote_recv_ts: datetime | None,
+) -> tuple[str, ...]:
+    return _future_time_diagnostics(
+        category=NoTradeReason.FUTURE_RECV_VISIBILITY_LEAK.value,
+        decision_ts=decision_ts,
+        sources=(
+            ("chainlink_recv_ts", chainlink_recv_ts, True),
+            ("exchange_recv_ts", exchange_recv_ts, True),
+            ("quote_recv_ts", quote_recv_ts, True),
+        ),
+    )
+
+
+def _future_event_clock_skew_diagnostics(
     *,
     decision_ts: datetime,
     chainlink_event_ts: datetime | None,
+    chainlink_recv_ts: datetime | None,
     exchange_event_ts: datetime | None,
+    exchange_recv_ts: datetime | None,
     quote_event_ts: datetime | None,
     quote_recv_ts: datetime | None,
-) -> bool:
-    return any(
-        source_ts is not None and source_ts > decision_ts
-        for source_ts in (
-            chainlink_event_ts,
-            exchange_event_ts,
-            quote_event_ts,
-            quote_recv_ts,
-        )
+) -> tuple[str, ...]:
+    return _future_time_diagnostics(
+        category=NoTradeReason.FUTURE_EVENT_CLOCK_SKEW.value,
+        decision_ts=decision_ts,
+        sources=(
+            (
+                "chainlink_event_ts",
+                chainlink_event_ts,
+                chainlink_recv_ts is not None and chainlink_recv_ts <= decision_ts,
+            ),
+            (
+                "exchange_event_ts",
+                exchange_event_ts,
+                exchange_recv_ts is not None and exchange_recv_ts <= decision_ts,
+            ),
+            (
+                "quote_event_ts",
+                quote_event_ts,
+                quote_recv_ts is not None and quote_recv_ts <= decision_ts,
+            ),
+        ),
     )
+
+
+def _future_time_diagnostics(
+    *,
+    category: str,
+    decision_ts: datetime,
+    sources: tuple[tuple[str, datetime | None, bool], ...],
+) -> tuple[str, ...]:
+    diagnostics: list[str] = []
+    for source_name, source_ts, visible_locally in sources:
+        if not visible_locally or source_ts is None or source_ts <= decision_ts:
+            continue
+        bucket = _future_ahead_bucket_ms(int((source_ts - decision_ts).total_seconds() * 1000))
+        diagnostics.extend(
+            (
+                category,
+                f"{category}:{source_name}:{bucket}",
+                (
+                    f"{category}:{source_name}:decision_ts="
+                    f"{decision_ts.isoformat()}:source_ts={source_ts.isoformat()}"
+                ),
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _future_ahead_bucket_ms(delta_ms: int) -> str:
+    if delta_ms <= 250:
+        return "0-250ms"
+    if delta_ms <= 500:
+        return "250-500ms"
+    if delta_ms <= 1000:
+        return "500-1000ms"
+    return "1000ms+"
 
 
 def _missing_quote_fields(quote: PolymarketQuote) -> bool:

@@ -2670,12 +2670,38 @@ def _collect_exchange_quotes(
                 )
             )
             continue
-        shaped_payload = (
-            _shape_kraken_payload(fetch_result.payload, recv_ts=recv_ts)
-            if venue_id == VenueCode.KRAKEN.value
-            else shaper(fetch_result.payload)
-        )
-        quote = normalizer(shaped_payload, recv_ts=recv_ts)
+        try:
+            shaped_payload = (
+                _shape_kraken_payload(fetch_result.payload, recv_ts=recv_ts)
+                if venue_id == VenueCode.KRAKEN.value
+                else shaper(fetch_result.payload)
+            )
+            quote = normalizer(shaped_payload, recv_ts=recv_ts)
+        except Exception as exc:
+            failure_class = failure_class or "payload_shape_invalid"
+            failure_type = type(exc).__name__
+            failure_message = str(exc)
+            venue_statuses[venue_id] = "terminal_failure"
+            logger.warning(
+                "exchange venue %s payload rejected during shaping/normalization: %s: %s",
+                venue_id,
+                failure_type,
+                failure_message,
+            )
+            raw_rows.append(
+                _failure_raw_row(
+                    source_name="exchange",
+                    request_url=request_url,
+                    recv_ts=recv_ts,
+                    status="terminal_failure",
+                    failure_type=failure_type,
+                    failure_message=failure_message,
+                    venue_id=venue_id,
+                    details=_payload_shape_details(fetch_result.payload)
+                    | {"raw_payload": fetch_result.payload},
+                )
+            )
+            continue
         raw_rows.append(
             _raw_capture_row(
                 venue_id=venue_id,
@@ -3598,6 +3624,20 @@ def _best_price_level(levels: Any, *, side: str, reverse: bool) -> dict[str, str
         "price": str(chosen["price"]),
         "size": str(chosen["size"]),
     }
+
+
+def _payload_shape_details(payload: Any) -> dict[str, object]:
+    if isinstance(payload, dict):
+        return {
+            "payload_type": "dict",
+            "payload_keys": sorted(str(key) for key in payload.keys()),
+        }
+    if isinstance(payload, list):
+        return {
+            "payload_type": "list",
+            "payload_length": len(payload),
+        }
+    return {"payload_type": type(payload).__name__}
 
 
 def _fetch_chainlink_decimals(

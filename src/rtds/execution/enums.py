@@ -41,6 +41,8 @@ class NoTradeReason(StrEnum):
     MISSING_COMPOSITE_NOWCAST = "missing_composite_nowcast"
     INSUFFICIENT_TRUSTED_VENUES = "insufficient_trusted_venues"
     MISSING_VOLATILITY_HISTORY = "missing_volatility_history"
+    FUTURE_RECV_VISIBILITY_LEAK = "future_recv_visibility_leak"
+    FUTURE_EVENT_CLOCK_SKEW = "future_event_clock_skew"
     FUTURE_STATE_LEAK_DETECTED = "future_state_leak_detected"
     MISSING_QUOTE_FIELDS = "missing_quote_fields"
     INVALID_STATE = "invalid_state"

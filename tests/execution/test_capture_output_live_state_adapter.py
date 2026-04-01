@@ -241,6 +241,7 @@ def test_capture_output_adapter_wires_into_shadow_engine(tmp_path) -> None:
             max_spread_abs="0.03",
             idle_sleep_seconds=0,
             shadow_root_dir=str(tmp_path / "artifacts/shadow"),
+            shadow_attach_ts=parse_utc("2026-03-26T01:00:00Z"),
         ),
     )
 
@@ -638,6 +639,94 @@ def test_capture_output_adapter_uses_only_as_of_source_rows_per_sample(tmp_path)
     assert second_state.chainlink_event_ts == parse_utc("2026-03-26T01:00:06Z")
     assert second_state.exchange_event_ts == parse_utc("2026-03-26T01:00:06Z")
     assert second_state.quote_event_ts == parse_utc("2026-03-26T01:00:06Z")
+
+
+def test_capture_output_adapter_uses_recv_ts_for_exchange_visibility(tmp_path) -> None:
+    session_id = "20260326T010000000Z"
+    _write_fixture_session(
+        tmp_path,
+        session_id=session_id,
+        sample_rows=[
+            {
+                "sample_index": 1,
+                "sample_started_at": "2026-03-26T01:00:05.000Z",
+                "sample_status": "healthy",
+                "degraded_sources": [],
+                "selected_market_id": "0xmarket",
+                "selected_market_slug": "btc-updown-5m-1770000600",
+                "selected_window_id": "btc-5m-20260326T010000Z",
+                "source_results": {
+                    "chainlink": {"status": "success", "details": {"fallback_used": False}},
+                    "polymarket_quotes": {
+                        "status": "success",
+                        "details": {"seconds_remaining": 295},
+                    },
+                },
+            },
+            {
+                "sample_index": 2,
+                "sample_started_at": "2026-03-26T01:00:06.000Z",
+                "sample_status": "healthy",
+                "degraded_sources": [],
+                "selected_market_id": "0xmarket",
+                "selected_market_slug": "btc-updown-5m-1770000600",
+                "selected_window_id": "btc-5m-20260326T010000Z",
+                "source_results": {
+                    "chainlink": {"status": "success", "details": {"fallback_used": False}},
+                    "polymarket_quotes": {
+                        "status": "success",
+                        "details": {"seconds_remaining": 294},
+                    },
+                },
+            },
+        ],
+    )
+    _write_jsonl(
+        tmp_path
+        / f"data/normalized/exchange_quotes/date=2026-03-26/session={session_id}/part-00000.jsonl",
+        [
+            _exchange_row("binance", "binance:spot:BTCUSDT", "70500.0")
+            | {
+                "event_ts": "2026-03-26T01:00:04Z",
+                "recv_ts": "2026-03-26T01:00:05Z",
+            },
+            _exchange_row("coinbase", "coinbase:spot:BTC-USD", "70510.0")
+            | {
+                "event_ts": "2026-03-26T01:00:04Z",
+                "recv_ts": "2026-03-26T01:00:05Z",
+            },
+            _exchange_row("kraken", "kraken:spot:BTC-USD", "70520.0")
+            | {
+                "event_ts": "2026-03-26T01:00:04Z",
+                "recv_ts": "2026-03-26T01:00:05Z",
+            },
+            _exchange_row("binance", "binance:spot:BTCUSDT", "70600.0")
+            | {
+                "event_ts": "2026-03-26T01:00:04.500Z",
+                "recv_ts": "2026-03-26T01:00:06Z",
+                "proc_ts": "2026-03-26T01:00:06Z",
+                "created_ts": "2026-03-26T01:00:06Z",
+                "sequence_id": "binance-2",
+                "raw_event_id": "raw-binance-2",
+            },
+        ],
+    )
+
+    adapter = CaptureOutputLiveStateAdapter(
+        CaptureOutputLiveStateConfig(
+            session_id=session_id,
+            normalized_root=tmp_path / "data/normalized",
+            artifacts_root=tmp_path / "artifacts/collect",
+        )
+    )
+
+    first_state = adapter.read_state()
+    second_state = adapter.read_state()
+
+    assert first_state is not None
+    assert second_state is not None
+    assert first_state.exchange_mid_price_by_venue["binance"] == _decimal("70500.00")
+    assert second_state.exchange_mid_price_by_venue["binance"] == _decimal("70600.00")
 
 
 def _write_fixture_session(

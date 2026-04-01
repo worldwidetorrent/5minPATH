@@ -262,7 +262,7 @@ def _supports_tradability(state: ExecutableStateView) -> bool:
 
 
 def _row_ts(row: dict[str, Any]):
-    for key in ("event_ts", "recv_ts", "created_ts", "updated_ts"):
+    for key in ("recv_ts", "event_ts", "created_ts", "updated_ts"):
         value = row.get(key)
         if value is not None:
             return parse_utc(str(value))
