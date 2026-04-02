@@ -1,0 +1,22 @@
+{
+  "baseline_id": "capture-baseline-20260401T112554963Z",
+  "session_id": "20260401T112554963Z",
+  "capture_date": "2026-04-01",
+  "capture_mode": "pilot",
+  "oracle_source": "chainlink_stream_public_delayed",
+  "current_admission_verdict": "conditionally_admissible",
+  "failure_reason": "session continuity passed; include or exclude windows using the window-quality policy modes",
+  "known_caveat": "Day 7 completed cleanly on the capture side and is a strong post-Day-6-fix shadow runtime baseline, but the paired shadow session still carries material future_event_clock_skew that should be treated as timestamp-quality evidence rather than a true visibility leak.",
+  "expected": {
+    "verdict": "conditionally_admissible",
+    "termination_reason": "completed",
+    "off_family_switch_count": 0,
+    "selected_binding_unresolved_window_count": 0,
+    "min_mapped_window_count": 285,
+    "min_snapshot_eligible_sample_ratio": 0.93,
+    "min_high_medium_anchor_windows": 120,
+    "min_oracle_source_sample_count": 52000,
+    "min_good_window_count": 25,
+    "max_unusable_window_count": 0
+  }
+}
