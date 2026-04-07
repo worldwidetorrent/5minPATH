@@ -59,15 +59,55 @@ The execution sidecar is no longer just an interface freeze. The repo now has:
 - a live-forward shadow launcher
 - append-only shadow decisions, order-state transitions, outcomes, and replay-comparison artifacts
 - shutdown reconciliation for shadow summaries
-- the first clean live-forward shadow baseline day on Day 4
+- two clean live-forward shadow runtime baseline days on Day 4 and Day 7
 
 Current baseline interpretation:
 
-- Day 4 is the first clean live-forward shadow baseline day
+- Day 4 and Day 7 are the clean live-forward shadow runtime baseline days
 - Day 5 capture is valid, but Day 5 shadow remains quarantined as historical evidence because `future_state_leak_detected` appeared on 46 rows before the recv-time visibility fix
+- Day 6 is a debugging specimen only: capture failed cleanly on a Kraken payload-shape issue and shadow mixed broad event-time skew with the old visibility-leak classification before the recv-vs-event split
 - the Day 5 leak was traced to Polymarket row visibility using `event_ts` before `recv_ts`; that narrow edge case is now patched on `main`
+- the current shadow leak split is explicit: `future_recv_visibility_leak` is the true as-of violation, while `future_event_clock_skew` is tracked as a separate timestamp-quality class
 
 So the current open execution-side problem is no longer runtime isolation. It is live composite availability, dominated by Binance outlier rejection during weak hours.
+
+### Current analysis workflow
+
+The research contract is frozen while the workflow is being made cheaper:
+
+- `policy v1`, `admission semantics v2`, the stage-1 `good_only` calibrator, the 3-venue composite rule, and the live-only shadow attach contract remain fixed
+- the daily close now has two intended lanes:
+  - fast lane: one-session capture/admission summary, one-session policy-stack replay, one-session calibrated baseline replay against the latest frozen calibration summary, and a quick shadow Stage A read
+  - checkpoint lane: the expensive cumulative `compare_calibrated_baseline` plus `build_policy_v1_baseline` refresh and tracker update
+- new sessions can now emit per-session rollups under `artifacts/session_rollups/date=.../session=.../`:
+  - `session_policy_rollup.json`
+  - `session_calibration_rollup.json`
+  - `session_shadow_rollup.json`
+- the cumulative calibration state now has a versioned home at `artifacts/policy_v1/state/good_only_calibration_state_v1.json`
+- the intended checkpoint path is now rollup-driven rather than raw-row-driven: new days should update the cumulative calibration state by merging one session rollup, while a full rebuild remains available as a validation path
+- until the historical pinned sessions are backfilled with calibration rollups, the checkpoint wrapper falls back to the older full rebuild path automatically
+
+The goal is to keep daily research moving without paying the full-history recomputation tax after every capture day.
+
+### Checkpoint cadence
+
+Heavy cumulative refresh is no longer the default daily path.
+
+Use the checkpoint lane:
+
+- every `3` clean/valid sessions
+- after a major runtime patch
+- before a formal report milestone
+- after a new clean shadow baseline day if the repo does not already have two clean shadow baseline days
+
+A heavy checkpoint should include:
+
+- cumulative calibration refresh validation
+- refreshed `cross_horizon_summary.json`
+- block-level report regeneration
+- clean-shadow-baseline comparison refresh
+
+Do not spend the heavy checkpoint cost after every daily close unless one of the conditions above is true.
 
 ### Current phase-1 deviation from target design
 

@@ -93,128 +93,25 @@ if [[ ! -f "$POLICY_V1_CALIBRATION" || ! -f "$POLICY_V1_HORIZON" ]]; then
 fi
 
 echo "writing day tracker entry"
-python3 - "$CAPTURE_DATE" "$SESSION_ID" "$POLICY_STACK_SUMMARY" "$CALIBRATED_SUMMARY" "$POLICY_V1_CALIBRATION" "$POLICY_V1_HORIZON" "$TRACKER_JSON" "$TRACKER_JSONL" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-capture_date = sys.argv[1]
-session_id = sys.argv[2]
-policy_stack_summary_path = Path(sys.argv[3])
-calibrated_summary_path = Path(sys.argv[4])
-calibration_summary_path = Path(sys.argv[5])
-cross_horizon_summary_path = Path(sys.argv[6])
-tracker_json_path = Path(sys.argv[7])
-tracker_jsonl_path = Path(sys.argv[8])
-
-summary_path = Path(f"artifacts/collect/date={capture_date}/session={session_id}/summary.json")
-admission_summary_path = Path(f"artifacts/collect/date={capture_date}/session={session_id}/admission_summary.json")
-
-summary = json.loads(summary_path.read_text(encoding="utf-8"))
-admission = json.loads(admission_summary_path.read_text(encoding="utf-8"))
-policy_stack_summary = json.loads(policy_stack_summary_path.read_text(encoding="utf-8"))
-calibrated_summary = json.loads(calibrated_summary_path.read_text(encoding="utf-8"))
-calibration_summary = json.loads(calibration_summary_path.read_text(encoding="utf-8"))
-cross_horizon_summary = json.loads(cross_horizon_summary_path.read_text(encoding="utf-8"))
-
-session_calibrated = next(
-    session for session in calibrated_summary["sessions"] if session["session_id"] == session_id
+SUMMARY_PATH="${OUTPUT_ROOT}/collect/date=${CAPTURE_DATE}/session=${SESSION_ID}/summary.json"
+ADMISSION_PATH="${OUTPUT_ROOT}/collect/date=${CAPTURE_DATE}/session=${SESSION_ID}/admission_summary.json"
+SHADOW_SUMMARY_PATH="${OUTPUT_ROOT}/shadow/${SESSION_ID}/shadow_summary.json"
+TRACKER_ARGS=(
+  --capture-date "$CAPTURE_DATE"
+  --session-id "$SESSION_ID"
+  --summary-path "$SUMMARY_PATH"
+  --admission-summary-path "$ADMISSION_PATH"
+  --policy-stack-summary-path "$POLICY_STACK_SUMMARY"
+  --calibrated-summary-path "$CALIBRATED_SUMMARY"
+  --policy-v1-calibration-summary-path "$POLICY_V1_CALIBRATION"
+  --policy-v1-cross-horizon-summary-path "$POLICY_V1_HORIZON"
+  --tracker-json-path "$TRACKER_JSON"
+  --tracker-jsonl-path "$TRACKER_JSONL"
 )
-cross_horizon_session = next(
-    session for session in cross_horizon_summary["sessions"] if session["session_id"] == session_id
-)
-
-bucket_ci_widths = {
-    bucket["bucket_name"]: (
-        float(bucket["calibration_gap_ci_high"]) - float(bucket["calibration_gap_ci_low"])
-    )
-    for bucket in calibration_summary["buckets"]
-}
-middle_bucket = next(
-    (bucket for bucket in calibration_summary["buckets"] if bucket["bucket_name"] == "near_mid"),
-    None,
-)
-
-entry = {
-    "capture_date": capture_date,
-    "session_id": session_id,
-    "termination_reason": summary["session_diagnostics"]["termination_reason"],
-    "lifecycle_state": summary["session_diagnostics"]["lifecycle_state"],
-    "sample_count": summary["sample_count"],
-    "good_window_count": admission["polymarket_continuity"]["window_verdict_counts"]["good"],
-    "good_snapshot_count": calibration_summary["total_snapshot_count"],
-    "session_good_window_count": cross_horizon_session["window_verdict_counts"]["good"],
-    "snapshot_eligible_sample_count": admission["snapshot_eligibility"]["snapshot_eligible_sample_count"],
-    "snapshot_eligible_sample_ratio": admission["snapshot_eligibility"]["snapshot_eligible_sample_ratio"],
-    "bucket_support_flags": {
-        bucket["bucket_name"]: bucket["support_flag"]
-        for bucket in calibration_summary["buckets"]
-    },
-    "bucket_ci_widths": bucket_ci_widths,
-    "support_flag_counts": calibration_summary["support_flag_counts"],
-    "near_mid_support_flag": middle_bucket["support_flag"] if middle_bucket else None,
-    "near_mid_ci_width": bucket_ci_widths.get("near_mid"),
-    "policy_stack_metrics": {
-        stack["stack_name"]: {
-            "trade_count": stack["trade_count"],
-            "hit_rate": stack["hit_rate"],
-            "average_selected_net_edge": stack["average_selected_net_edge"],
-            "total_pnl": stack["total_pnl"],
-            "average_roi": stack["average_roi"],
-            "pnl_per_window": stack["pnl_per_window"],
-            "pnl_per_100_trades": stack["pnl_per_100_trades"],
-            "pnl_per_1000_snapshots": stack["pnl_per_1000_snapshots"],
-        }
-        for stack in policy_stack_summary["stacks"]
-    },
-    "calibrated_baseline_metrics": {
-        "raw_summary": session_calibrated["raw_summary"],
-        "calibrated_summary": session_calibrated["calibrated_summary"],
-        "delta_total_pnl": session_calibrated["delta_total_pnl"],
-        "delta_average_roi": session_calibrated["delta_average_roi"],
-        "delta_average_selected_net_edge": session_calibrated["delta_average_selected_net_edge"],
-        "delta_trade_count": session_calibrated["delta_trade_count"],
-        "calibration_applied_row_count": session_calibrated["calibration_applied_row_count"],
-        "calibration_support_flag_counts": session_calibrated["calibration_support_flag_counts"],
-    },
-    "notable_anomalies": [
-        "session remains quote-noisy overall despite clean structural continuity",
-        "use good-only baseline metrics as the primary calibration signal",
-    ],
-    "artifact_paths": {
-        "summary_path": str(summary_path),
-        "admission_summary_path": str(admission_summary_path),
-        "policy_stack_summary_path": str(policy_stack_summary_path),
-        "calibrated_summary_path": str(calibrated_summary_path),
-        "policy_v1_calibration_summary_path": str(calibration_summary_path),
-        "policy_v1_cross_horizon_summary_path": str(cross_horizon_summary_path),
-    },
-}
-
-shadow_summary_path = Path(f"artifacts/shadow/{session_id}/shadow_summary.json")
-entry["capture_valid"] = (
-    summary["session_diagnostics"]["termination_reason"] == "completed"
-    and admission["family_validation"]["off_family_switch_count"] == 0
-    and admission["mapping_and_anchor"]["selected_binding_unresolved_window_count"] == 0
-)
-entry["shadow_clean_baseline"] = None
-entry["shadow_reason"] = None
-if shadow_summary_path.exists():
-    shadow_summary = json.loads(shadow_summary_path.read_text(encoding="utf-8"))
-    shadow_reason = None
-    if (
-        shadow_summary.get("no_trade_reason_counts", {}).get("future_state_leak_detected", 0) > 0
-    ):
-        shadow_reason = "future_state_leak_detected"
-    entry["shadow_clean_baseline"] = shadow_reason is None
-    entry["shadow_reason"] = shadow_reason
-    entry["artifact_paths"]["shadow_summary_path"] = str(shadow_summary_path)
-
-tracker_json_path.parent.mkdir(parents=True, exist_ok=True)
-tracker_json_path.write_text(json.dumps(entry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-with tracker_jsonl_path.open("a", encoding="utf-8", newline="\n") as handle:
-    handle.write(json.dumps(entry, sort_keys=True) + "\n")
-PY
+if [[ -f "$SHADOW_SUMMARY_PATH" ]]; then
+  TRACKER_ARGS+=(--shadow-summary-path "$SHADOW_SUMMARY_PATH")
+fi
+python3 -m rtds.cli.write_day_tracker_entry "${TRACKER_ARGS[@]}"
 
 echo "day analysis chain complete for ${SESSION_ID}"
 echo "policy_stack_summary=${POLICY_STACK_SUMMARY}"

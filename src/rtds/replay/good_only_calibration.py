@@ -203,6 +203,66 @@ def build_good_only_calibration_summary(
     )
 
 
+def build_good_only_calibration_summary_from_rollups(
+    session_rollups: Sequence[object],
+    *,
+    config: GoodOnlyCalibrationConfig,
+    source_manifest_path: str,
+    comparison_config_path: str,
+) -> GoodOnlyCalibrationSummary:
+    """Aggregate coarse reliability buckets from per-session rollups."""
+
+    window_rollups_by_bucket: dict[str, list[Mapping[str, object]]] = {
+        bucket.bucket_name: [] for bucket in config.bucket_definitions
+    }
+    total_snapshot_count = 0
+    distinct_windows: set[tuple[str, str]] = set()
+    distinct_sessions: set[str] = set()
+    for rollup in session_rollups:
+        total_snapshot_count += int(rollup.calibration_eligible_snapshot_count)
+        distinct_sessions.add(str(rollup.session_id))
+        for window_id in rollup.calibration_eligible_window_ids:
+            distinct_windows.add((str(rollup.session_id), str(window_id)))
+        for bucket_rollup in rollup.bucket_rollups:
+            for window_rollup in bucket_rollup.window_rollups:
+                window_rollups_by_bucket[bucket_rollup.bucket_name].append(
+                    {
+                        "session_label": window_rollup.session_label,
+                        "session_id": window_rollup.session_id,
+                        "window_id": window_rollup.window_id,
+                        "snapshot_count": window_rollup.snapshot_count,
+                        "resolved_up_count": window_rollup.resolved_up_count,
+                        "pred_sum": float(window_rollup.predicted_f_sum),
+                    }
+                )
+
+    bucket_results: list[CalibrationBucketResult] = []
+    for index, bucket in enumerate(config.bucket_definitions):
+        bucket_results.append(
+            _build_bucket_result_from_window_rollups(
+                bucket,
+                window_rollups_by_bucket[bucket.bucket_name],
+                config=config,
+                bucket_index=index,
+            )
+        )
+    bucket_results = _apply_merge_recommendations(bucket_results, config=config)
+    support_flag_counts = defaultdict(int)
+    for result in bucket_results:
+        support_flag_counts[result.support_flag] += 1
+    return GoodOnlyCalibrationSummary(
+        calibration_id=config.calibration_id,
+        policy_universe=config.policy_universe,
+        source_manifest_path=source_manifest_path,
+        comparison_config_path=comparison_config_path,
+        total_snapshot_count=total_snapshot_count,
+        total_window_count=len(distinct_windows),
+        total_session_count=len(distinct_sessions),
+        support_flag_counts=dict(sorted(support_flag_counts.items())),
+        buckets=tuple(bucket_results),
+    )
+
+
 def good_only_calibration_summary_to_dict(
     summary: GoodOnlyCalibrationSummary,
 ) -> dict[str, object]:
@@ -295,6 +355,96 @@ def _build_bucket_result(
         if support_flag == "thin":
             recommended_action = "apply_with_caution"
 
+    return CalibrationBucketResult(
+        bucket_name=bucket.bucket_name,
+        lower_bound_inclusive=bucket.lower_bound_inclusive,
+        upper_bound=bucket.upper_bound,
+        upper_bound_inclusive=bucket.upper_bound_inclusive,
+        snapshot_count=snapshot_count,
+        window_count=window_count,
+        session_count=session_count,
+        observed_resolution_rate=observed_resolution_rate,
+        average_predicted_f=average_predicted_f,
+        calibration_gap=calibration_gap,
+        observed_resolution_rate_ci_low=observed_ci_low,
+        observed_resolution_rate_ci_high=observed_ci_high,
+        calibration_gap_ci_low=gap_ci_low,
+        calibration_gap_ci_high=gap_ci_high,
+        support_flag=support_flag,
+        recommended_merge_bucket=None,
+        recommended_action=recommended_action,
+        provisional_calibrated_f=provisional_calibrated_f,
+        session_snapshot_counts=dict(sorted(session_snapshot_counts.items())),
+        session_window_counts={
+            key: len(value) for key, value in sorted(session_window_ids.items())
+        },
+    )
+
+
+def _build_bucket_result_from_window_rollups(
+    bucket: CalibrationBucketDefinition,
+    window_rollups: Sequence[Mapping[str, object]],
+    *,
+    config: GoodOnlyCalibrationConfig,
+    bucket_index: int,
+) -> CalibrationBucketResult:
+    session_snapshot_counts = defaultdict(int)
+    session_window_ids = defaultdict(set)
+    snapshot_count = 0
+    resolved_up_count = 0
+    predicted_f_sum = 0.0
+    for row in window_rollups:
+        snapshot_count += int(row["snapshot_count"])
+        resolved_up_count += int(row["resolved_up_count"])
+        predicted_f_sum += float(row["pred_sum"])
+        session_snapshot_counts[str(row["session_label"])] += int(row["snapshot_count"])
+        session_window_ids[str(row["session_label"])].add(str(row["window_id"]))
+    window_count = len(window_rollups)
+    session_count = len(session_snapshot_counts)
+    observed_resolution_rate = (
+        None if snapshot_count == 0 else Decimal(str(resolved_up_count / snapshot_count))
+    )
+    average_predicted_f = (
+        None if snapshot_count == 0 else Decimal(str(predicted_f_sum / snapshot_count))
+    )
+    calibration_gap = (
+        None
+        if observed_resolution_rate is None or average_predicted_f is None
+        else observed_resolution_rate - average_predicted_f
+    )
+    observed_ci_low: Decimal | None = None
+    observed_ci_high: Decimal | None = None
+    gap_ci_low: Decimal | None = None
+    gap_ci_high: Decimal | None = None
+    if window_rollups:
+        bootstrap = _bootstrap_bucket(
+            [
+                {
+                    "snapshot_count": int(row["snapshot_count"]),
+                    "resolved_up_count": int(row["resolved_up_count"]),
+                    "pred_sum": float(row["pred_sum"]),
+                }
+                for row in window_rollups
+            ],
+            replicates=config.bootstrap_replicates,
+            seed=config.bootstrap_seed + bucket_index,
+        )
+        observed_ci_low = Decimal(str(bootstrap["observed_ci_low"]))
+        observed_ci_high = Decimal(str(bootstrap["observed_ci_high"]))
+        gap_ci_low = Decimal(str(bootstrap["gap_ci_low"]))
+        gap_ci_high = Decimal(str(bootstrap["gap_ci_high"]))
+    support_flag = _support_flag(
+        snapshot_count=snapshot_count,
+        window_count=window_count,
+        config=config,
+    )
+    provisional_calibrated_f = None
+    recommended_action = "merge_or_leave_uncorrected"
+    if support_flag in {"sufficient", "thin"} and observed_resolution_rate is not None:
+        provisional_calibrated_f = observed_resolution_rate
+        recommended_action = "apply_bucket_mean"
+        if support_flag == "thin":
+            recommended_action = "apply_with_caution"
     return CalibrationBucketResult(
         bucket_name=bucket.bucket_name,
         lower_bound_inclusive=bucket.lower_bound_inclusive,
@@ -470,6 +620,7 @@ __all__ = [
     "GoodOnlyCalibrationConfig",
     "GoodOnlyCalibrationSummary",
     "build_good_only_calibration_summary",
+    "build_good_only_calibration_summary_from_rollups",
     "classify_calibration_bucket",
     "good_only_calibration_summary_to_dict",
     "load_good_only_calibration_config",

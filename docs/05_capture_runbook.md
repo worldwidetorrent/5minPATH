@@ -246,6 +246,7 @@ The current pinned capture baselines are:
 - [`20260326T055920480Z`](/home/ubuntu/testingproject/docs/baselines/20260326T055920480Z.md)
 - [`20260327T093850581Z`](/home/ubuntu/testingproject/docs/baselines/20260327T093850581Z.md)
 - [`20260329T002704901Z`](/home/ubuntu/testingproject/docs/baselines/20260329T002704901Z.md)
+- [`20260401T112554963Z`](/home/ubuntu/testingproject/docs/baselines/20260401T112554963Z.md)
 
 The original Task 7 reference bundle is still documented here:
 
@@ -257,8 +258,110 @@ The current semantic freeze for promotion to `main` is:
 
 The current machine-readable cross-horizon analysis manifests are:
 
+## Optimized post-run workflow
+
+Use the optimized workflow for new daily sessions so the default closeout is cheap and the heavy cumulative refresh is optional.
+
+Fast lane after a completed session:
+
+```bash
+./scripts/run_day_optimized_postrun.sh YYYY-MM-DD <session-id>
+```
+
+What that does:
+
+- runs the per-session policy-stack replay
+- runs the single-session calibrated baseline replay against the latest frozen calibration summary
+- writes the day fast-lane summary under `artifacts/day_fast_lane/...`
+- writes per-session rollups under `artifacts/session_rollups/...`
+
+Use the heavy cumulative refresh only when the day is clearly a milestone day or when you want to validate the incremental path:
+
+```bash
+./scripts/run_day_optimized_postrun.sh YYYY-MM-DD <session-id> --checkpoint
+```
+
+That second form additionally:
+
+- updates the cumulative calibration state under `artifacts/policy_v1/state/...`
+- emits refreshed `good_only_calibration_summary.json` and `cross_horizon_summary.json`
+- writes the tracker entry for the session
+
+Recommended Day 8 order:
+
+1. Run capture + shadow under the frozen contract.
+2. Run `./scripts/run_day_optimized_postrun.sh YYYY-MM-DD <session-id>` immediately after completion.
+3. Inspect the fast-lane summary and shadow classification.
+4. Only run `--checkpoint` if Day 8 looks like a milestone day or if you want a validation rebuild.
+
+Checkpoint cadence:
+
+- run the heavy checkpoint every `3` clean/valid sessions
+- run it after a major runtime patch
+- run it before a formal report milestone
+- run it after a new clean shadow baseline day if you do not already have two clean shadow baseline days
+
+Heavy checkpoint scope:
+
+- cumulative calibration refresh validation
+- refreshed `cross_horizon_summary.json`
+- block-level report regeneration
+- clean-shadow-baseline comparison refresh
+
+What not to do:
+
+- do not run the heavy checkpoint after every daily close by default
+- do not treat full-history recomputation as the normal fast-lane follow-up
+
 - [`configs/baselines/analysis/policy_v1_cross_horizon.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_cross_horizon.json)
 - [`configs/baselines/analysis/policy_v1_calibrated_baseline.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_calibrated_baseline.json)
+
+## Post-run analysis lanes
+
+The research contract is frozen. Post-run analysis is now split into two lanes so daily closes do not force a full cumulative rebuild every time.
+
+Daily fast lane:
+
+```bash
+./scripts/run_day_fast_lane.sh YYYY-MM-DD <session-id>
+```
+
+- runs one-session `compare_policy_stacks`
+- runs one-session `compare_calibrated_session` against the latest frozen calibration summary
+- writes `artifacts/day_fast_lane/date=.../session=.../summary.json`
+- writes `artifacts/day_fast_lane/date=.../session=.../report/report.md`
+- writes per-session rollups under `artifacts/session_rollups/date=.../session=.../`:
+  - `session_policy_rollup.json`
+  - `session_calibration_rollup.json`
+  - `session_shadow_rollup.json` when shadow artifacts exist
+- use this lane for daily decision support: capture pass/fail, admission verdict, window-quality mix, raw `baseline_only`, calibrated `baseline_only`, and quick shadow Stage A
+
+Checkpoint heavy lane:
+
+```bash
+./scripts/run_checkpoint_refresh.sh YYYY-MM-DD <session-id>
+```
+
+- reruns cumulative `compare_calibrated_baseline`
+- reruns cumulative `build_policy_v1_baseline`
+- updates the tracker entry for the supplied session against the refreshed cumulative artifacts
+- prefers the rollup-driven checkpoint CLIs and falls back to the older full rebuild only when one or more pinned sessions are still missing `session_policy_rollup.json` or `session_calibration_rollup.json`
+- the incremental calibration state lives at `artifacts/policy_v1/state/good_only_calibration_state_v1.json`
+- the intended steady-state path is:
+  - new day writes `session_calibration_rollup.json`
+  - checkpoint merges that one rollup into the cumulative state
+  - checkpoint emits refreshed `good_only_calibration_summary.json` and `cross_horizon_summary.json`
+- use this lane less often, when you actually want the support map, cross-horizon report, and tracker to move
+
+Legacy all-in-one chain:
+
+```bash
+./scripts/run_day_analysis_chain.sh YYYY-MM-DD <session-id>
+```
+
+- still exists
+- still performs the old serial flow
+- but it is now the expensive compatibility path rather than the intended daily-close default
 
 The older Task 7 manifest remains here for the original pinned comparison slice:
 
