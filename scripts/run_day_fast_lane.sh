@@ -19,7 +19,9 @@ CALIBRATED_MANIFEST="${CALIBRATED_MANIFEST:-configs/baselines/analysis/policy_v1
 
 python3 -m rtds.cli.compare_policy_stacks \
   --date "$CAPTURE_DATE" \
-  --session-id "$SESSION_ID"
+  --session-id "$SESSION_ID" \
+  --rebuild-snapshots true \
+  --rebuild-reference true
 
 POLICY_STACK_ROOT="${OUTPUT_ROOT}/replay_policy_stack/${CAPTURE_DATE}/session_${SESSION_ID}"
 POLICY_STACK_SUMMARY="$(python3 - "$POLICY_STACK_ROOT" <<'PY'
