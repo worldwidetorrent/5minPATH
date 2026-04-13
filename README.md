@@ -14,7 +14,7 @@ That question sounds small. It is not.
 
 ## Current status
 
-The architecture described in this README is still the target design. The codebase now implements the core research spine, one canonical replay-day execution path, and a sanctioned phase-1 capture command that materializes real raw and normalized files. It still does not implement the full long-running live collection stack described later in this document.
+The architecture described in this README is still the target design. The codebase now implements the core research spine, one canonical replay-day execution path, and a sanctioned bounded capture path that can materialize full-day raw and normalized public-endpoint sessions. It still does not implement the fully continuous streaming collector fleet or authenticated execution path described later in this document.
 
 Implemented on `main`:
 
@@ -59,17 +59,19 @@ The execution sidecar is no longer just an interface freeze. The repo now has:
 - a live-forward shadow launcher
 - append-only shadow decisions, order-state transitions, outcomes, and replay-comparison artifacts
 - shutdown reconciliation for shadow summaries
-- two clean live-forward shadow runtime baseline days on Day 4 and Day 7
+- four clean live-forward shadow runtime comparison days on Day 4, Day 7, Day 8, and Day 9
 
 Current baseline interpretation:
 
-- Day 4 and Day 7 are the clean live-forward shadow runtime baseline days
+- Day 4 and Day 7 are the strongest clean live-forward shadow runtime baselines for the early block
+- Day 8 and Day 9 repeated clean shadow runtime behavior, but their modeled-edge survival was materially weaker than Day 7
 - Day 5 capture is valid, but Day 5 shadow remains quarantined as historical evidence because `future_state_leak_detected` appeared on 46 rows before the recv-time visibility fix
 - Day 6 is a debugging specimen only: capture failed cleanly on a Kraken payload-shape issue and shadow mixed broad event-time skew with the old visibility-leak classification before the recv-vs-event split
+- Day 10 capture and shadow completed cleanly at runtime, but its fast-lane replay/calibration and edge-survival closeout were still in progress at the time of this doc refresh
 - the Day 5 leak was traced to Polymarket row visibility using `event_ts` before `recv_ts`; that narrow edge case is now patched on `main`
 - the current shadow leak split is explicit: `future_recv_visibility_leak` is the true as-of violation, while `future_event_clock_skew` is tracked as a separate timestamp-quality class
 
-So the current open execution-side problem is no longer runtime isolation. It is live composite availability, dominated by Binance outlier rejection during weak hours.
+So the current open execution-side problem is no longer runtime isolation. It is whether calibrated modeled edge survives live execution conditions consistently. The observed drags are live composite availability plus day-dependent side agreement; Day 8 showed that high availability can still fail economically when live-vs-replay directional agreement collapses.
 
 ### Current analysis workflow
 
@@ -89,6 +91,17 @@ The research contract is frozen while the workflow is being made cheaper:
 
 The goal is to keep daily research moving without paying the full-history recomputation tax after every capture day.
 
+### Current backup posture
+
+Bulk research data and generated artifacts are intentionally not tracked in Git.
+
+As of the 2026-04-13 doc refresh:
+
+- local raw/normalized data plus artifacts had grown into a large generated corpus dominated by raw Polymarket metadata JSONL
+- the completed corpus through Day 9 was archived and uploaded to Google Drive under `testingproject_backups/day9_and_prior_20260413`
+- that backup intentionally excludes the Day 10 session, which should be archived and uploaded separately after its analysis closeout
+- Git remains the home for code, docs, configs, and small tracked reports; multi-GB raw/artifact backups belong in external storage, not normal Git branches
+
 ### Checkpoint cadence
 
 Heavy cumulative refresh is no longer the default daily path.
@@ -98,7 +111,7 @@ Use the checkpoint lane:
 - every `3` clean/valid sessions
 - after a major runtime patch
 - before a formal report milestone
-- after a new clean shadow baseline day if the repo does not already have two clean shadow baseline days
+- after a new clean shadow baseline day materially changes the evidence set or before a formal comparison refresh
 
 A heavy checkpoint should include:
 
@@ -719,11 +732,11 @@ Implemented:
 
 Immediate next work:
 
-- finish the current daily capture-analysis cadence while keeping policy-v1 and admission-v2 frozen
-- continue execution-side validation with live-forward shadow sessions after the Day 5 recv-time leak fix
-- measure whether Day 4-style actionable patterns repeat on later days under the fixed shadow path
-- keep the historical Day 5 shadow quarantined while using Day 4 as the clean live-forward baseline
-- continue diagnosing live composite scarcity, especially Binance outlier behavior during weak hours
+- finish the Day 10 fast-lane closeout and edge-survival pass while keeping policy-v1 and admission-v2 frozen
+- back up the completed Day 10 session separately after its closeout artifacts are stable
+- rerun the stricter minimum-edge filter experiment on the expanded clean-shadow set after Day 10 is classified
+- keep Day 5 and Day 6 shadow evidence quarantined as diagnostic specimens
+- keep heavy cumulative checkpoints reserved for milestone conditions rather than running them after every daily close
 
 ---
 

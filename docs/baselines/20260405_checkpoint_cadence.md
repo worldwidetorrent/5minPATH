@@ -10,7 +10,7 @@ Run the heavy checkpoint when one of these is true:
 - every `3` clean/valid sessions
 - after a major runtime patch
 - before a formal reporting milestone
-- after a new clean shadow baseline day if the repo does not already have two clean shadow baseline days
+- after a new clean shadow baseline day materially changes the evidence set or before a formal comparison refresh
 
 Heavy checkpoint scope:
 - cumulative calibration refresh validation
@@ -18,9 +18,9 @@ Heavy checkpoint scope:
 - block-level report regeneration
 - clean shadow baseline comparison refresh
 
-Current interpretation after Day 7:
-- clean shadow baseline days already exist on Day 4 and Day 7
-- so the default next sessions should use the fast lane first and defer the heavy checkpoint unless a milestone or runtime-change condition is hit
+Current interpretation after the Day 8/Day 9 fast-lane workflow:
+- multiple clean shadow runtime comparison days now exist
+- the default next sessions should use the fast lane first and defer the heavy checkpoint unless a milestone, formal comparison refresh, or runtime-change condition is hit
 
 The point of this cadence is simple:
 - daily closes stay cheap

@@ -287,19 +287,20 @@ That second form additionally:
 - emits refreshed `good_only_calibration_summary.json` and `cross_horizon_summary.json`
 - writes the tracker entry for the session
 
-Recommended Day 8 order:
+Recommended daily order after the fast-lane split:
 
 1. Run capture + shadow under the frozen contract.
 2. Run `./scripts/run_day_optimized_postrun.sh YYYY-MM-DD <session-id>` immediately after completion.
 3. Inspect the fast-lane summary and shadow classification.
-4. Only run `--checkpoint` if Day 8 looks like a milestone day or if you want a validation rebuild.
+4. Run the session edge-survival pass only after calibrated session rows exist.
+5. Only run `--checkpoint` if the day looks like a milestone day or if you want a validation rebuild.
 
 Checkpoint cadence:
 
 - run the heavy checkpoint every `3` clean/valid sessions
 - run it after a major runtime patch
 - run it before a formal report milestone
-- run it after a new clean shadow baseline day if you do not already have two clean shadow baseline days
+- run it after a new clean shadow baseline day materially changes the evidence set or before a formal comparison refresh
 
 Heavy checkpoint scope:
 
@@ -312,6 +313,13 @@ What not to do:
 
 - do not run the heavy checkpoint after every daily close by default
 - do not treat full-history recomputation as the normal fast-lane follow-up
+
+Backup posture:
+
+- do not put raw data, normalized partitions, or generated artifacts into a normal Git branch
+- use external storage for bulk generated data; the 2026-04-13 stopgap target is Google Drive via `rclone`
+- when a capture is active, exclude that session from broad archives and back it up separately after final `summary.json`, `admission_summary.json`, and shadow summaries are stable
+- keep Git focused on source, configs, docs, and small tracked reports
 
 - [`configs/baselines/analysis/policy_v1_cross_horizon.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_cross_horizon.json)
 - [`configs/baselines/analysis/policy_v1_calibrated_baseline.json`](/home/ubuntu/testingproject/configs/baselines/analysis/policy_v1_calibrated_baseline.json)
