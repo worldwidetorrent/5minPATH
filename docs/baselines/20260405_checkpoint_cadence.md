@@ -18,8 +18,9 @@ Heavy checkpoint scope:
 - block-level report regeneration
 - clean shadow baseline comparison refresh
 
-Current interpretation after the Day 8/Day 9 fast-lane workflow:
+Current interpretation after the Day 8/Day 9/Day 10 fast-lane workflow:
 - multiple clean shadow runtime comparison days now exist
+- Day 10 materially expanded the clean-shadow comparison set, but did not by itself justify changing policy
 - the default next sessions should use the fast lane first and defer the heavy checkpoint unless a milestone, formal comparison refresh, or runtime-change condition is hit
 
 The point of this cadence is simple:

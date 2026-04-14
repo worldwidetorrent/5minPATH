@@ -59,19 +59,19 @@ The execution sidecar is no longer just an interface freeze. The repo now has:
 - a live-forward shadow launcher
 - append-only shadow decisions, order-state transitions, outcomes, and replay-comparison artifacts
 - shutdown reconciliation for shadow summaries
-- four clean live-forward shadow runtime comparison days on Day 4, Day 7, Day 8, and Day 9
+- five clean live-forward shadow runtime comparison days on Day 4, Day 7, Day 8, Day 9, and Day 10
 
 Current baseline interpretation:
 
 - Day 4 and Day 7 are the strongest clean live-forward shadow runtime baselines for the early block
-- Day 8 and Day 9 repeated clean shadow runtime behavior, but their modeled-edge survival was materially weaker than Day 7
+- Day 8, Day 9, and Day 10 repeated clean shadow runtime behavior, but their modeled-edge survival was materially weaker than Day 7
 - Day 5 capture is valid, but Day 5 shadow remains quarantined as historical evidence because `future_state_leak_detected` appeared on 46 rows before the recv-time visibility fix
 - Day 6 is a debugging specimen only: capture failed cleanly on a Kraken payload-shape issue and shadow mixed broad event-time skew with the old visibility-leak classification before the recv-vs-event split
-- Day 10 capture and shadow completed cleanly at runtime, but its fast-lane replay/calibration and edge-survival closeout were still in progress at the time of this doc refresh
+- Day 10 capture, shadow, fast-lane replay/calibration, and edge-survival closeout completed cleanly; it preserved `7.09%` of calibrated modeled edge, better than Day 4/Day 8/Day 9 but still far below Day 7
 - the Day 5 leak was traced to Polymarket row visibility using `event_ts` before `recv_ts`; that narrow edge case is now patched on `main`
 - the current shadow leak split is explicit: `future_recv_visibility_leak` is the true as-of violation, while `future_event_clock_skew` is tracked as a separate timestamp-quality class
 
-So the current open execution-side problem is no longer runtime isolation. It is whether calibrated modeled edge survives live execution conditions consistently. The observed drags are live composite availability plus day-dependent side agreement; Day 8 showed that high availability can still fail economically when live-vs-replay directional agreement collapses.
+So the current open execution-side problem is no longer runtime isolation. It is whether calibrated modeled edge survives live execution conditions consistently. The observed drags are live composite availability plus day-dependent side agreement; Day 8 and Day 10 showed that high availability can still fail economically when live-vs-replay directional agreement is weak.
 
 ### Current analysis workflow
 
@@ -95,11 +95,11 @@ The goal is to keep daily research moving without paying the full-history recomp
 
 Bulk research data and generated artifacts are intentionally not tracked in Git.
 
-As of the 2026-04-13 doc refresh:
+As of the 2026-04-14 doc refresh:
 
 - local raw/normalized data plus artifacts had grown into a large generated corpus dominated by raw Polymarket metadata JSONL
 - the completed corpus through Day 9 was archived and uploaded to Google Drive under `testingproject_backups/day9_and_prior_20260413`
-- that backup intentionally excludes the Day 10 session, which should be archived and uploaded separately after its analysis closeout
+- Day 10 was archived, checksumed, `zstd -t` verified, and uploaded separately to Google Drive under `testingproject_backups/day10_20260412T123517467Z`
 - Git remains the home for code, docs, configs, and small tracked reports; multi-GB raw/artifact backups belong in external storage, not normal Git branches
 
 ### Checkpoint cadence
@@ -732,9 +732,7 @@ Implemented:
 
 Immediate next work:
 
-- finish the Day 10 fast-lane closeout and edge-survival pass while keeping policy-v1 and admission-v2 frozen
-- back up the completed Day 10 session separately after its closeout artifacts are stable
-- rerun the stricter minimum-edge filter experiment on the expanded clean-shadow set after Day 10 is classified
+- rerun the stricter minimum-edge filter experiment on the expanded clean-shadow set now that Day 10 is classified clean
 - keep Day 5 and Day 6 shadow evidence quarantined as diagnostic specimens
 - keep heavy cumulative checkpoints reserved for milestone conditions rather than running them after every daily close
 

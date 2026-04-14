@@ -138,8 +138,8 @@ Wave-two evidence logic lives in:
 Observed baseline state after adoption:
 - Day 4 established the first clean live-forward shadow baseline
 - Day 7 established the first strong post-fix clean shadow runtime baseline
-- Day 8 and Day 9 repeated clean shadow runtime behavior, but with weaker modeled-edge survival than Day 7
-- Day 10 completed cleanly at the capture/shadow runtime layer; fast-lane replay/calibration and edge-survival closeout were still pending at the time of this note
+- Day 8, Day 9, and Day 10 repeated clean shadow runtime behavior, but with weaker modeled-edge survival than Day 7
+- Day 10 completed cleanly through capture, shadow, fast-lane replay/calibration, and edge-survival closeout; it preserved `7.09%` of calibrated modeled edge with availability and side mismatch still dominant
 - Day 5 capture remained valid, but its paired shadow run is historically quarantined because
   `future_state_leak_detected` exposed a Polymarket recv-time visibility bug before the patch above
 - Day 6 remains a debugging specimen because it combined capture failure with pre-fix shadow semantics
