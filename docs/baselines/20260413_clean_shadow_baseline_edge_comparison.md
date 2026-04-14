@@ -49,4 +49,4 @@ Working conclusion:
 - runtime cleanliness is repeating
 - calibrated replay remains economically meaningful
 - live edge survival is regime-dependent
-- superseded by `docs/baselines/20260414_clean_shadow_baseline_edge_comparison.md` after Day 10 closed; the next policy-relevant test remains the stricter minimum-edge filter on the expanded clean-shadow set
+- superseded by `docs/baselines/20260414_clean_shadow_baseline_edge_comparison.md` after Day 10 closed; the expanded minimum-edge experiment is recorded in `docs/baselines/20260414_clean_shadow_min_edge_experiment.md`

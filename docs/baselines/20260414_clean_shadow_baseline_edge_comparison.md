@@ -54,5 +54,5 @@ Working conclusion:
 - runtime cleanliness is repeating
 - calibrated replay remains economically meaningful
 - live edge survival is regime-dependent
-- Day 10 strengthens the case that the next policy-relevant test is a stricter minimum-edge filter across the expanded clean-shadow set
-- do not change policy yet; use the expanded set for offline threshold testing first
+- the expanded minimum-edge experiment is now recorded in `docs/baselines/20260414_clean_shadow_min_edge_experiment.md`
+- do not change policy yet; the blunt stricter minimum-edge filter preserved Day 7 and improved Day 8, but it hurt Day 10 and does not pass as a universal refinement

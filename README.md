@@ -68,6 +68,7 @@ Current baseline interpretation:
 - Day 5 capture is valid, but Day 5 shadow remains quarantined as historical evidence because `future_state_leak_detected` appeared on 46 rows before the recv-time visibility fix
 - Day 6 is a debugging specimen only: capture failed cleanly on a Kraken payload-shape issue and shadow mixed broad event-time skew with the old visibility-leak classification before the recv-vs-event split
 - Day 10 capture, shadow, fast-lane replay/calibration, and edge-survival closeout completed cleanly; it preserved `7.09%` of calibrated modeled edge, better than Day 4/Day 8/Day 9 but still far below Day 7
+- the expanded five-day minimum-edge experiment did not pass as a universal policy refinement: stricter filters preserved Day 7 and improved Day 8, but were flat-to-worse on Day 4/Day 9 and materially worse on Day 10
 - the Day 5 leak was traced to Polymarket row visibility using `event_ts` before `recv_ts`; that narrow edge case is now patched on `main`
 - the current shadow leak split is explicit: `future_recv_visibility_leak` is the true as-of violation, while `future_event_clock_skew` is tracked as a separate timestamp-quality class
 
@@ -732,9 +733,9 @@ Implemented:
 
 Immediate next work:
 
-- rerun the stricter minimum-edge filter experiment on the expanded clean-shadow set now that Day 10 is classified clean
+- keep the current policy frozen; the blunt stricter minimum-edge filter stays a diagnostic candidate, not a default policy change
+- continue collecting clean-shadow days under the fast lane unless a milestone condition justifies a heavy checkpoint
 - keep Day 5 and Day 6 shadow evidence quarantined as diagnostic specimens
-- keep heavy cumulative checkpoints reserved for milestone conditions rather than running them after every daily close
 
 ---
 
