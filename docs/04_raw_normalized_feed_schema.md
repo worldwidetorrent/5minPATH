@@ -7,7 +7,7 @@ Last Updated: 2026-03-15
 
 ## 1. Purpose
 
-This document defines the raw-ingestion and normalized-feed schema for `testingproject`.
+This document defines the raw-ingestion and normalized-feed schema for `5minPATH`.
 
 It sits directly under:
 

@@ -3,13 +3,13 @@ requires = ["hatchling>=1.24.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "testingproject"
+name = "5minPATH"
 version = "0.1.0"
 description = "Research and replay system for oracle-anchored BTC binary markets."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-  { name = "Codex" },
+  { name = "worldwidetorrent" },
 ]
 dependencies = []
 

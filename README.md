@@ -1,4 +1,4 @@
-# testingproject
+# 5minPATH
 
 A data-first research system for **pricing, replaying, and evaluating 5-minute BTC Polymarket markers that resolve on Chainlink**.
 
@@ -432,7 +432,7 @@ The project is built around these rules:
 The repository is structured to mirror the methodology.
 
 ```text
-testingproject/
+5minPATH/
 ├── README.md
 ├── docs/
 │   ├── 01_canonical_schema_spine.md

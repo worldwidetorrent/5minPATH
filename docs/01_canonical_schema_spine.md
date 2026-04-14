@@ -7,7 +7,7 @@ Last Updated: 2026-03-13
 
 ## 1. Purpose
 
-This document defines the canonical schema spine for the `testingproject` codebase. It is the shared grammar used by all downstream modules: ingestion, normalization, mapping, snapshots, replay, evaluation, and execution.
+This document defines the canonical schema spine for the `5minPATH` codebase. It is the shared grammar used by all downstream modules: ingestion, normalization, mapping, snapshots, replay, evaluation, and execution.
 
 The goal is not to describe every table in the system. The goal is to define the small set of shared entities, identifiers, timestamp semantics, units, naming rules, and invariants that every other schema must obey.
 
