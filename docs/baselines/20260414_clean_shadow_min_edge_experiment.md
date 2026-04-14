@@ -66,3 +66,4 @@ The current project read remains:
 - fill loss is not the main bottleneck
 - live edge survival is regime-dependent
 - the next policy lever should be tested only if it handles Day 8-style side mismatch without damaging Day 10-style middle-survival days
+- the next tranche is bounded clean-shadow collection plus conditional diagnosis, recorded in `docs/baselines/20260414_clean_shadow_conditional_diagnosis_tranche.md`

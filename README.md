@@ -734,7 +734,9 @@ Implemented:
 Immediate next work:
 
 - keep the current policy frozen; the blunt stricter minimum-edge filter stays a diagnostic candidate, not a default policy change
-- continue collecting clean-shadow days under the fast lane unless a milestone condition justifies a heavy checkpoint
+- run the next clean-shadow collection tranche under the fast lane only: collect `3` more clean shadow days or stop after `2` weeks, whichever comes first
+- for each clean day, record raw/calibrated PnL, edge survival, joined rate, actionability on calibrated rows, side-match rate, availability loss, side-mismatch loss, fill loss, and event-time skew rate
+- defer heavy checkpoints unless a milestone condition justifies one
 - keep Day 5 and Day 6 shadow evidence quarantined as diagnostic specimens
 
 ---
