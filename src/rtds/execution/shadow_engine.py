@@ -95,11 +95,6 @@ class ShadowEngine:
     _last_heartbeat_monotonic: float = field(default_factory=time.monotonic, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        attach_ts = (
-            datetime.now(UTC)
-            if self.config.shadow_attach_ts is None
-            else self.config.shadow_attach_ts
-        )
         assert_live_state_adapter(self.adapter.descriptor)
         self.writer = ShadowArtifactWriter(
             session_id=self.config.session_id,
@@ -108,7 +103,7 @@ class ShadowEngine:
         self.ledger = ShadowLedger(
             session_id=self.config.session_id,
             policy_mode=self.config.policy_mode,
-            shadow_attach_ts=attach_ts,
+            shadow_attach_ts=self.config.shadow_attach_ts,
             processing_mode=self.config.processing_mode,
         )
         self.stats = ShadowEngineStats()
@@ -139,7 +134,10 @@ class ShadowEngine:
                 if not processed and self.config.idle_sleep_seconds > 0:
                     time.sleep(self.config.idle_sleep_seconds)
         finally:
-            self.flush_summary(reconcile_with_disk=True)
+            self._flush_summary_fail_open(
+                logger=active_logger,
+                reconcile_with_disk=True,
+            )
             try:
                 self.adapter.close()
             except Exception:
@@ -175,8 +173,7 @@ class ShadowEngine:
                 decision_ts=executable_state.snapshot_ts,
                 decision_lag_ms=decision_lag_ms,
             )
-            self.flush_summary()
-            return True
+            return self._flush_summary_fail_open(logger=active_logger)
 
         try:
             policy_decision = evaluate_policy_decision(
@@ -195,8 +192,7 @@ class ShadowEngine:
                 policy_decision,
                 decision_lag_ms=decision_lag_ms,
             )
-            self.flush_summary()
-            return True
+            return self._flush_summary_fail_open(logger=active_logger)
         except Exception:
             self.stats.error_count += 1
             active_logger.exception(
@@ -217,6 +213,24 @@ class ShadowEngine:
                 shadow_order_states_path=self.writer.paths.shadow_order_states_path,
             )
         self.writer.write_shadow_summary(summary)
+
+    def _flush_summary_fail_open(
+        self,
+        *,
+        logger: logging.Logger,
+        reconcile_with_disk: bool = False,
+    ) -> bool:
+        try:
+            self.flush_summary(reconcile_with_disk=reconcile_with_disk)
+        except Exception:
+            self.stats.error_count += 1
+            logger.exception(
+                "shadow summary write failed session=%s reconcile_with_disk=%s",
+                self.config.session_id,
+                reconcile_with_disk,
+            )
+            return False
+        return True
 
     def _record_policy_decision(
         self,

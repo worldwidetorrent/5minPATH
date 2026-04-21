@@ -91,25 +91,40 @@ Practical rule:
 
 Most useful commands:
 
-1. Bounded smoke capture:
+1. Bootstrap a local environment:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev]'
+```
+
+2. Run the test suite:
+
+```bash
+python -m pytest -q
+```
+
+3. Bounded smoke capture:
 
 ```bash
 ./scripts/run_collectors.sh --capture-mode smoke --duration-seconds 600
 ```
 
-2. Fast-lane closeout for a completed session:
+4. Fast-lane closeout for a completed session:
 
 ```bash
 ./scripts/run_day_fast_lane.sh YYYY-MM-DD <session-id>
 ```
 
-3. Optimized post-run closeout:
+5. Optimized post-run closeout:
 
 ```bash
 ./scripts/run_day_optimized_postrun.sh YYYY-MM-DD <session-id>
 ```
 
-For capture modes, operational notes, artifact paths, and longer examples:
+For setup, capture modes, operational notes, artifact paths, and longer examples:
 - [How to use the repo](docs/how_to_use.md)
 - [Capture runbook](docs/05_capture_runbook.md)
 - [Current capabilities and validation boundary](docs/current_capabilities.md)

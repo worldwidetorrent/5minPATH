@@ -18,7 +18,27 @@ Read these first:
 - [Current capabilities and validation boundary](current_capabilities.md)
 - [Capture runbook](05_capture_runbook.md)
 
-## 2. Run A First Capture
+## 2. Bootstrap A Local Environment
+
+From repo root:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev]'
+```
+
+Basic verification:
+
+```bash
+python -m pytest -q
+python -m ruff check src tests
+```
+
+The repo currently assumes a local virtual environment for repeatable tooling. If `pytest` is not on your global `PATH`, that is expected; use the active venv or `.venv/bin/python`.
+
+## 3. Run A First Capture
 
 From repo root, start with a bounded smoke run:
 
@@ -34,7 +54,7 @@ If you want a denser validation run:
 
 For a full day-style bounded run, use the same sanctioned collector entrypoint with a longer duration or the team’s normal session orchestration.
 
-## 3. Check What Landed
+## 4. Check What Landed
 
 The first places to inspect are:
 
@@ -61,7 +81,7 @@ Healthy output means:
 
 For deeper operational checks, use the [Capture runbook](05_capture_runbook.md).
 
-## 4. Run Post-Run Analysis
+## 5. Run Post-Run Analysis
 
 For a completed session, the normal cheap daily path is the fast lane:
 
@@ -77,7 +97,7 @@ If you want the fuller optimized closeout path:
 
 These workflows produce artifacts under `artifacts/...` for replay, calibration, and execution-side diagnostics.
 
-## 5. Where The Outputs Go
+## 6. Where The Outputs Go
 
 Main output families:
 
@@ -90,7 +110,7 @@ Main output families:
 
 This tool gives you files and reports, not a hosted UI.
 
-## 6. What A User Can Do With The Data
+## 7. What A User Can Do With The Data
 
 Once a session is captured and closed out, you can:
 
@@ -100,7 +120,7 @@ Once a session is captured and closed out, you can:
 - study live-forward shadow actionability and survival
 - export the normalized files and artifact summaries into notebooks or your own dashboards
 
-## 7. Where To Make Your Own Tweaks
+## 8. Where To Make Your Own Tweaks
 
 Start here if you want to adapt the repo for your own experiments:
 
@@ -120,7 +140,7 @@ Useful related docs:
 - [Stage-1 calibration decision](decisions/0006_stage1_good_only_calibration.md)
 - [Execution-v0 shadow boundary](decisions/0008_execution_v0_shadow_boundary.md)
 
-## 8. What Not To Assume
+## 9. What Not To Assume
 
 Do not assume this repo is:
 
