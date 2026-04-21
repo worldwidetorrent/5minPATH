@@ -159,6 +159,11 @@ Current launcher path:
 - [`src/rtds/cli/run_shadow_live.py`](/home/ubuntu/testingproject/src/rtds/cli/run_shadow_live.py)
 - convenience wrapper: [`scripts/run_shadow_live.sh`](/home/ubuntu/testingproject/scripts/run_shadow_live.sh)
 
+Launcher attach-time rule:
+- for real live runs, the launcher owns the attach boundary
+- if `--shadow-attach-ts` is omitted, the launcher stamps startup time in UTC
+- explicit `--shadow-attach-ts` remains available for controlled replay, smoke, and fixture-driven runs
+
 Out of scope in v0:
 - live order submission
 - authenticated CLOB trading

@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import signal
+from datetime import UTC, datetime
 
-from rtds.cli.run_shadow_live import _install_shutdown_signal_handlers, main
+from rtds.cli import run_shadow_live
+from rtds.cli.run_shadow_live import (
+    _install_shutdown_signal_handlers,
+    _resolve_shadow_attach_ts,
+    main,
+)
 from rtds.execution.enums import PolicyMode
 from rtds.execution.shadow_engine import ShadowEngine, ShadowEngineConfig
 from rtds.execution.sizing import SIZE_MODE_FIXED_CONTRACTS, SizingPolicy
@@ -40,6 +47,32 @@ def test_run_shadow_live_cli_processes_fixture_session(tmp_path) -> None:
     assert (
         tmp_path / f"artifacts/shadow/{session_id}/shadow_summary.json"
     ).exists()
+
+
+def test_resolve_shadow_attach_ts_defaults_to_launcher_start(monkeypatch) -> None:
+    fixed_now = datetime(2026, 4, 21, 12, 34, 56, tzinfo=UTC)
+
+    class FixedDatetime:
+        @staticmethod
+        def now(tz=None):
+            assert tz is UTC
+            return fixed_now
+
+        @staticmethod
+        def fromisoformat(value: str):
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr(run_shadow_live, "datetime", FixedDatetime)
+
+    args = argparse.Namespace(shadow_attach_ts=None)
+
+    assert _resolve_shadow_attach_ts(args) == fixed_now
+
+
+def test_resolve_shadow_attach_ts_prefers_explicit_value() -> None:
+    args = argparse.Namespace(shadow_attach_ts="2026-03-26T00:59:59Z")
+
+    assert _resolve_shadow_attach_ts(args) == datetime(2026, 3, 26, 0, 59, 59, tzinfo=UTC)
 
 
 def test_install_shutdown_signal_handlers_requests_graceful_stop(tmp_path) -> None:

@@ -97,6 +97,8 @@ If you want the fuller optimized closeout path:
 
 These workflows produce artifacts under `artifacts/...` for replay, calibration, and execution-side diagnostics.
 
+For direct shadow runtime launches, the live launcher uses its own UTC startup time as the attach boundary unless you pass an explicit `--shadow-attach-ts`. That keeps `live_only_from_attach_ts` honest for real live runs while still allowing controlled fixture or replay-oriented launches.
+
 ## 6. Where The Outputs Go
 
 Main output families:

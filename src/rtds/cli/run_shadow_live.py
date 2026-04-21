@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -34,6 +34,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def run_shadow_live(args: argparse.Namespace) -> Path:
+    shadow_attach_ts = _resolve_shadow_attach_ts(args)
     adapter = CaptureOutputLiveStateAdapter(
         CaptureOutputLiveStateConfig(
             session_id=args.session_id,
@@ -62,16 +63,17 @@ def run_shadow_live(args: argparse.Namespace) -> Path:
             idle_sleep_seconds=args.idle_sleep_seconds,
             shadow_root_dir=args.shadow_root,
             processing_mode=args.processing_mode,
-            shadow_attach_ts=_parse_optional_utc_datetime(args.shadow_attach_ts),
+            shadow_attach_ts=shadow_attach_ts,
         ),
     )
     LOGGER.info(
         "starting shadow live runtime session=%s normalized_root=%s "
-        "artifacts_root=%s shadow_root=%s",
+        "artifacts_root=%s shadow_root=%s shadow_attach_ts=%s",
         args.session_id,
         args.normalized_root,
         args.artifacts_root,
         args.shadow_root,
+        shadow_attach_ts.isoformat(),
     )
     restore_handlers = _install_shutdown_signal_handlers(engine)
     try:
@@ -151,6 +153,13 @@ def _parse_optional_utc_datetime(value: str | None) -> datetime | None:
     if normalized.endswith("Z"):
         normalized = f"{normalized[:-1]}+00:00"
     return datetime.fromisoformat(normalized)
+
+
+def _resolve_shadow_attach_ts(args: argparse.Namespace) -> datetime:
+    explicit_attach_ts = _parse_optional_utc_datetime(args.shadow_attach_ts)
+    if explicit_attach_ts is not None:
+        return explicit_attach_ts
+    return datetime.now(UTC)
 
 
 def _install_shutdown_signal_handlers(engine: ShadowEngine):
