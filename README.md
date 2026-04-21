@@ -127,6 +127,88 @@ The formal closeout and evidence index live in:
 - [`0009_phase1_closeout.md`](/home/ubuntu/testingproject/docs/decisions/0009_phase1_closeout.md)
 - [`20260421_phase1_evidence_index.md`](/home/ubuntu/testingproject/docs/baselines/20260421_phase1_evidence_index.md)
 
+### What A New User Can Actually Do With This Repo
+
+The repo is not just capture code, and it is not a polished end-user product. The best way to describe it is:
+
+> a specialized research and measurement pipeline for oracle-anchored Polymarket market families, with the strongest out-of-the-box fit on 5-minute BTC markets.
+
+For the BTC 5-minute family, a new user can clone the repo and use it to:
+
+- run bounded capture sessions
+- write raw and normalized JSONL datasets
+- generate session summaries and admission artifacts
+- replay captured sessions against the frozen research contract
+- compare raw vs calibrated baseline behavior
+- run live-forward shadow measurement
+- inspect the resulting artifacts and build their own downstream analysis
+
+What the repo gives them is primarily files and reports, not a hosted application:
+
+- raw data under `data/raw/...`
+- normalized data under `data/normalized/...`
+- session and replay artifacts under `artifacts/...`
+- capture/admission summaries that say whether a session is structurally usable
+- replay, calibration, and shadow-execution evidence for later research
+
+What a user can do with those outputs:
+
+- study quote behavior and oracle alignment over time
+- reconstruct what the system knew at each sample
+- test fair-value models and policy ideas offline
+- compare replay economics against live-forward shadow behavior
+- export the normalized data into their own notebooks, scripts, or dashboards
+
+What this repo does **not** provide out of the box:
+
+- a generic “point at any Polymarket market and it just works” experience
+- a polished dashboard product
+- authenticated execution or live trading
+- automatic generalization beyond the current BTC 5-minute oracle-anchored family
+
+So the transferability split is:
+
+- highly reusable:
+  - capture/session orchestration
+  - raw/normalized data pipeline
+  - replay/admission/shadow artifact structure
+- moderately reusable:
+  - research workflow and evaluation machinery
+- market-specific:
+  - current window binding
+  - Chainlink open/settle anchoring
+  - current fair-value, policy, and calibration assumptions
+
+### Dashboard Reality
+
+A dashboard is not too much work in the abstract, but a good one is a separate product layer rather than a small README tweak.
+
+The easiest version would be:
+
+- a read-only local dashboard over existing `artifacts/...` and `data/normalized/...`
+- session list
+- capture/admission summary view
+- replay/calibration summary view
+- shadow summary view
+- links into the underlying artifact files
+
+That is very feasible.
+
+The harder version would be:
+
+- live updating views
+- cross-session comparisons
+- charting over raw/normalized datasets
+- interactive diagnostics for replay vs shadow joins
+
+That is not impossible, but it is real product work: data serving, query design, UI, and maintenance.
+
+So the honest answer is:
+
+- a lightweight analysis dashboard is feasible
+- a polished general-purpose dashboard is a nontrivial new project
+- the repo already has enough structured artifacts that a read-only dashboard would be the sensible first version
+
 ### Current backup posture
 
 Bulk research data and generated artifacts are intentionally not tracked in Git.
