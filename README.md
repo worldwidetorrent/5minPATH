@@ -110,6 +110,7 @@ Most useful commands:
 ```
 
 For capture modes, operational notes, artifact paths, and longer examples:
+- [How to use the repo](docs/how_to_use.md)
 - [Capture runbook](docs/05_capture_runbook.md)
 - [Current capabilities and validation boundary](docs/current_capabilities.md)
 
@@ -172,6 +173,7 @@ Key paths:
 
 Best starting docs:
 
+- [How to use the repo](docs/how_to_use.md)
 - [Current capabilities and validation boundary](docs/current_capabilities.md)
 - [Closeout decision](docs/decisions/0009_phase1_closeout.md)
 - [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
