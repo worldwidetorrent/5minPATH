@@ -59,24 +59,29 @@ The execution sidecar is no longer just an interface freeze. The repo now has:
 - a live-forward shadow launcher
 - append-only shadow decisions, order-state transitions, outcomes, and replay-comparison artifacts
 - shutdown reconciliation for shadow summaries
-- five clean live-forward shadow runtime comparison days on Day 4, Day 7, Day 8, Day 9, and Day 10
+- six clean live-forward shadow runtime comparison days on Day 4, Day 7, Day 8, Day 9, Day 10, and Day 11
 
 Current baseline interpretation:
 
-- Day 4 and Day 7 are the strongest clean live-forward shadow runtime baselines for the early block
-- Day 8, Day 9, and Day 10 repeated clean shadow runtime behavior, but their modeled-edge survival was materially weaker than Day 7
+- Day 4 and Day 7 are the two clearest anchor days in the clean-shadow evidence set: Day 4 as a weak/availability-driven baseline and Day 7 as the only strong-survival baseline
+- Day 8, Day 9, Day 10, and Day 11 repeated clean shadow runtime behavior, but their modeled-edge survival stayed materially weaker than Day 7
 - Day 5 capture is valid, but Day 5 shadow remains quarantined as historical evidence because `future_state_leak_detected` appeared on 46 rows before the recv-time visibility fix
 - Day 6 is a debugging specimen only: capture failed cleanly on a Kraken payload-shape issue and shadow mixed broad event-time skew with the old visibility-leak classification before the recv-vs-event split
-- Day 10 capture, shadow, fast-lane replay/calibration, and edge-survival closeout completed cleanly; it preserved `7.09%` of calibrated modeled edge, better than Day 4/Day 8/Day 9 but still far below Day 7
-- the expanded five-day minimum-edge experiment did not pass as a universal policy refinement: stricter filters preserved Day 7 and improved Day 8, but were flat-to-worse on Day 4/Day 9 and materially worse on Day 10
+- Day 11 joined the middle band with `3.78%` survival and a `29.62%` 3-trusted-venue rate, reinforcing that the main drag remains availability first and side mismatch second
+- the six-day clean-shadow distribution is now explicit:
+  - Day 7 is the only strong-survival day
+  - Day 9, Day 10, and Day 11 form the middle band
+  - Day 4 and Day 8 remain the weak days
+- the minimum-edge experiment did not pass as a universal policy refinement
+- the delta-bucket, delta-gate, and wide-delta interaction panels found real conditional failure structure, but not a robust standalone policy candidate
 - the Day 5 leak was traced to Polymarket row visibility using `event_ts` before `recv_ts`; that narrow edge case is now patched on `main`
 - the current shadow leak split is explicit: `future_recv_visibility_leak` is the true as-of violation, while `future_event_clock_skew` is tracked as a separate timestamp-quality class
 
-So the current open execution-side problem is no longer runtime isolation. It is whether calibrated modeled edge survives live execution conditions consistently. The observed drags are live composite availability plus day-dependent side agreement; Day 8 and Day 10 showed that high availability can still fail economically when live-vs-replay directional agreement is weak.
+So the current open execution-side problem is no longer runtime isolation. It is whether calibrated modeled edge survives live execution conditions consistently. The observed drags are live composite availability plus day-dependent side agreement; the Phase 1 closeout result is that the measurement engine is validated, but deployment is not recommended.
 
 ### Current analysis workflow
 
-The research contract is frozen while the workflow is being made cheaper:
+The research contract is frozen and the cheaper workflow is now part of the Phase 1 steady-state operating model:
 
 - `policy v1`, `admission semantics v2`, the stage-1 `good_only` calibrator, the 3-venue composite rule, and the live-only shadow attach contract remain fixed
 - the daily close now has two intended lanes:
@@ -90,7 +95,7 @@ The research contract is frozen while the workflow is being made cheaper:
 - the intended checkpoint path is now rollup-driven rather than raw-row-driven: new days should update the cumulative calibration state by merging one session rollup, while a full rebuild remains available as a validation path
 - until the historical pinned sessions are backfilled with calibration rollups, the checkpoint wrapper falls back to the older full rebuild path automatically
 
-The goal is to keep daily research moving without paying the full-history recomputation tax after every capture day.
+The goal was to keep daily research moving without paying the full-history recomputation tax after every capture day. That goal is now part of the Phase 1 closeout state rather than an open redesign task.
 
 ### What We Learned About The Market
 
@@ -126,7 +131,7 @@ The formal closeout and evidence index live in:
 
 Bulk research data and generated artifacts are intentionally not tracked in Git.
 
-As of the 2026-04-14 doc refresh:
+As of the current doc state:
 
 - local raw/normalized data plus artifacts had grown into a large generated corpus dominated by raw Polymarket metadata JSONL
 - the completed corpus through Day 9 was archived and uploaded to Google Drive under `testingproject_backups/day9_and_prior_20260413`
@@ -746,7 +751,7 @@ If it cannot, even a clever formula is decorative.
 
 ## 18. Current status
 
-Current status: **policy-v1, long-run capture, and execution-side validation phase**.
+Current status: **Phase 1 complete and frozen**.
 
 Implemented:
 
@@ -760,14 +765,22 @@ Implemented:
 - policy-v1 replay stacks with pinned early baselines plus the later daily block sessions
 - first serious policy-v1 report, stage-1 coarse `good_only` calibration, and frozen raw-vs-calibrated baseline comparison
 - ADRs for window IDs, composite method, snapshot cadence, oracle source, policy v1, and stage-1 calibration
+- execution-v0 shadow boundaries with repeated clean live-forward evidence days
+- Phase 1 closeout decision plus evidence index
 
-Immediate next work:
+Phase 1 conclusion:
 
-- keep the current policy frozen; the blunt stricter minimum-edge filter stays a diagnostic candidate, not a default policy change
-- run the next clean-shadow collection tranche under the fast lane only: collect `3` more clean shadow days or stop after `2` weeks, whichever comes first
-- for each clean day, record raw/calibrated PnL, edge survival, joined rate, actionability on calibrated rows, side-match rate, availability loss, side-mismatch loss, fill loss, and event-time skew rate
-- defer heavy checkpoints unless a milestone condition justifies one
-- keep Day 5 and Day 6 shadow evidence quarantined as diagnostic specimens
+- the system is operationally real
+- calibration is consistently useful in replay
+- live survival is real but economically inconsistent across clean days
+- the dominant drags are availability first and directional disagreement second
+- fill loss is minor
+- blanket refinements failed
+- conditional structure exists, but not strongly enough yet to justify policy change or deployment
+
+If the project is reopened later, it should be treated as a new named phase rather than a continuation of this one:
+
+- `Phase 2: Conditional Survival Refinement`
 
 ---
 
