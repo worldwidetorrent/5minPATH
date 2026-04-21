@@ -1,6 +1,6 @@
-# Phase-1 Capture Runbook
+# Capture Runbook
 
-This repo now has one sanctioned capture path for the phase-1 data pull:
+This repo now has one sanctioned capture path for the documented BTC 5-minute data pull:
 
 ```bash
 ./scripts/run_collectors.sh
@@ -41,7 +41,7 @@ The `pilot` and `admission` presets also widen sample-based failure thresholds f
 
 ## Deviation note
 
-The original architecture still aims at source-faithful, continuously running collectors. The current phase-1 implementation is intentionally narrower:
+The original architecture still aims at source-faithful, continuously running collectors. The current implemented tool is intentionally narrower:
 
 - it is bounded-session polling, not long-running
 - it uses public REST and RPC endpoints instead of the eventual websocket / RTDS-first stack

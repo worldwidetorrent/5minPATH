@@ -45,7 +45,7 @@ The opportunity is in the mismatch between those clocks.
 
 ## Strategy in plain language
 
-The Phase 1 strategy was:
+The initial research strategy was:
 
 1. anchor to Chainlink for open and settlement definition
 2. use multiple exchange venues as a fast nowcast
@@ -71,7 +71,7 @@ That is why the repo was built as a research and replay engine first, not as a b
 
 ## Methodology layers
 
-Phase 1 used four methodological layers:
+The documented evidence set used four methodological layers:
 
 ### 1. Baseline analytic prior
 
@@ -105,9 +105,9 @@ Treat the real question as tradeable net edge after:
 - model buffer
 - stale-data risk
 
-## Phase 1 conclusion
+## Current evidence conclusion
 
-Phase 1 showed:
+The current evidence set showed:
 
 - real predictive structure exists under this framing
 - calibration improved replay economics repeatedly

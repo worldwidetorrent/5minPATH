@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document gives the short-form architecture view for `5minPATH` after the Phase 1 closeout.
+This document gives the short-form architecture view for `5minPATH` as it exists in the current documented evidence set.
 
 The repo is best understood as five stacked layers.
 
@@ -73,7 +73,7 @@ Purpose:
 - replay policy behavior
 - compare raw versus calibrated economics
 
-Current Phase 1 state:
+Current implemented state:
 
 - policy `v1`
 - stage-1 `good_only` calibration
@@ -82,7 +82,7 @@ Current Phase 1 state:
 Reference docs:
 
 - [Stage-1 good-only calibration decision](decisions/0006_stage1_good_only_calibration.md)
-- [Phase 1 evidence index](baselines/20260421_phase1_evidence_index.md)
+- [Evidence index](baselines/20260421_phase1_evidence_index.md)
 
 ## 5. Live-forward shadow execution measurement
 
@@ -117,4 +117,4 @@ It is a research and measurement system that:
 3. evaluates fair value and policy behavior
 4. measures live-forward execution realism with a shadow sidecar
 
-That stack is what Phase 1 validated, even though Phase 1 did not justify deployment.
+That stack is what the documented evidence set validated, even though it did not justify deployment.
