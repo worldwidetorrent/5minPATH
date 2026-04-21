@@ -164,6 +164,12 @@ Launcher attach-time rule:
 - if `--shadow-attach-ts` is omitted, the launcher stamps startup time in UTC
 - explicit `--shadow-attach-ts` remains available for controlled replay, smoke, and fixture-driven runs
 
+Runtime time-boundary rule:
+- state visibility is driven by `decision_ts`, `recv_ts`, and the attach boundary
+- backlog routing is driven by `snapshot_ts` versus `shadow_attach_ts`
+- wall clock is not used to decide whether a row is visible or live-forward
+- the remaining wall-clock use in the engine is diagnostic only: `decision_lag_ms`
+
 Out of scope in v0:
 - live order submission
 - authenticated CLOB trading
