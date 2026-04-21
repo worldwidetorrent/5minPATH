@@ -16,6 +16,7 @@ The repo was built to answer one narrow question:
 - Deployment: **not recommended** from the current evidence set
 - Best fit: BTC 5-minute oracle-anchored markets
 - Reuse model: capture/replay/shadow pipeline is reusable; market binding and modeling assumptions are configurable
+- Operational boundary: validated for repeated bounded day-scale sessions, not for one indefinite multi-day daemon process
 
 Project history and evidence:
 - [Closeout decision](docs/decisions/0009_phase1_closeout.md)
@@ -110,6 +111,7 @@ Most useful commands:
 
 For capture modes, operational notes, artifact paths, and longer examples:
 - [Capture runbook](docs/05_capture_runbook.md)
+- [Current capabilities and validation boundary](docs/current_capabilities.md)
 
 ## Current Capabilities
 
@@ -170,6 +172,7 @@ Key paths:
 
 Best starting docs:
 
+- [Current capabilities and validation boundary](docs/current_capabilities.md)
 - [Closeout decision](docs/decisions/0009_phase1_closeout.md)
 - [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
 - [Capture runbook](docs/05_capture_runbook.md)

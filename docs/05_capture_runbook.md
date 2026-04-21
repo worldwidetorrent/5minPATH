@@ -21,6 +21,22 @@ By default this is a one-shot capture pass, not a daemon. For bounded live work,
 - `pilot`: denser replay-admission validation
 - `admission`: same dense cadence profile intended for longer candidate-day work
 
+## Operational validation boundary
+
+The current evidence supports:
+
+- repeated bounded sessions
+- repeated day-scale runs with restart between sessions
+- crash-safe partial-session recovery and artifact preservation
+
+The current evidence does **not** yet prove:
+
+- one indefinitely running multi-day daemon
+- week-scale continuous uptime with no restart
+- absence of long-lived state drift over very long runtime
+
+Use this tool as a bounded research collector unless you are intentionally extending and revalidating those longer-running behaviors.
+
 The `pilot` and `admission` presets also widen sample-based failure thresholds for Chainlink, exchange, and Polymarket so 1-second sampling does not abort on a few seconds of transient loss. Pilot mode now also tolerates isolated unusable Polymarket windows better than admission mode, because the pilot is meant to finish and identify bad windows instead of dying on the first thin-book stretch.
 
 ## Deviation note
