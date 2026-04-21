@@ -179,36 +179,6 @@ So the transferability split is:
   - Chainlink open/settle anchoring
   - current fair-value, policy, and calibration assumptions
 
-### Dashboard Reality
-
-A dashboard is not too much work in the abstract, but a good one is a separate product layer rather than a small README tweak.
-
-The easiest version would be:
-
-- a read-only local dashboard over existing `artifacts/...` and `data/normalized/...`
-- session list
-- capture/admission summary view
-- replay/calibration summary view
-- shadow summary view
-- links into the underlying artifact files
-
-That is very feasible.
-
-The harder version would be:
-
-- live updating views
-- cross-session comparisons
-- charting over raw/normalized datasets
-- interactive diagnostics for replay vs shadow joins
-
-That is not impossible, but it is real product work: data serving, query design, UI, and maintenance.
-
-So the honest answer is:
-
-- a lightweight analysis dashboard is feasible
-- a polished general-purpose dashboard is a nontrivial new project
-- the repo already has enough structured artifacts that a read-only dashboard would be the sensible first version
-
 ### Current backup posture
 
 Bulk research data and generated artifacts are intentionally not tracked in Git.
