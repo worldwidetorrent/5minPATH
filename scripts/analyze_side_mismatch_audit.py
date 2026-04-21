@@ -306,6 +306,8 @@ def build_rows(spec: DaySpec) -> list[dict[str, Any]]:
                 "shadow_selected_net_edge": to_decimal(tradability.get("selected_net_edge")),
                 "skew_bucket": skew_bucket(diagnostics),
                 "state_diagnostics": diagnostics,
+                "volatility_regime": state.get("volatility_regime"),
+                "window_quality_regime": state.get("window_quality_regime"),
             }
         )
         base_row.update(venue_context(state))
