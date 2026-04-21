@@ -92,6 +92,36 @@ The research contract is frozen while the workflow is being made cheaper:
 
 The goal is to keep daily research moving without paying the full-history recomputation tax after every capture day.
 
+### What We Learned About The Market
+
+Phase 1 produced a clear market-level read.
+
+What the repo now supports saying:
+
+- there is real structure in these 5-minute BTC Polymarket markets; the replay plus calibration stack found economically meaningful signal repeatedly rather than on one isolated day
+- calibration was consistently useful in replay, which means the market is not behaving like pure noise under the repo's oracle-anchored framing
+- some of that modeled edge survives under live-forward shadow conditions on certain clean days, so the signal is not purely a replay artifact
+- the main failure is not fill mechanics; the dominant live drags were:
+  1. composite availability
+  2. side mismatch / directional disagreement
+  3. fill loss was minor by comparison
+- strong live survival was real but uncommon; Day 7 proved the stack can line up availability and directional agreement, but the broader clean-day set showed that this is not the default regime
+- wide live-vs-replay calibrated fair-value divergence is a real conditional failure state
+- that divergence alone is not enough to explain every weak day; the strongest second condition found in Phase 1 was wide delta combined with replay up-side buckets (`lean_up` / `far_up`), with low-vol as a weaker supporting context
+
+So the market conclusion is narrower than "there is no edge" and narrower than "the current policy works":
+
+> there is legitimate signal here, but the current technique does not harvest it consistently enough under live conditions.
+
+That is why the Phase 1 decision is:
+
+- validated measurement engine
+- no deployment recommendation
+
+The formal closeout and evidence index live in:
+- [`0009_phase1_closeout.md`](/home/ubuntu/testingproject/docs/decisions/0009_phase1_closeout.md)
+- [`20260421_phase1_evidence_index.md`](/home/ubuntu/testingproject/docs/baselines/20260421_phase1_evidence_index.md)
+
 ### Current backup posture
 
 Bulk research data and generated artifacts are intentionally not tracked in Git.
