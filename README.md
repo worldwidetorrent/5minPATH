@@ -8,18 +8,18 @@ The repo was built to answer one narrow question:
 
 ## Status
 
-**Phase 1 complete and frozen**
+**Usable research and measurement tool**
 
 - Outcome: validated measurement engine
 - Key result: calibration was consistently useful in replay; live edge survival was real but inconsistent
 - Main live drags: availability first, directional disagreement second, fill loss minor
-- Deployment: **not recommended** from Phase 1 evidence
-- If reopened later: treat it as a new named phase, not active continuation
-- Suggested future phase name: `Phase 2: Conditional Survival Refinement`
+- Deployment: **not recommended** from the current evidence set
+- Best fit: BTC 5-minute oracle-anchored markets
+- Reuse model: capture/replay/shadow pipeline is reusable; market binding and modeling assumptions are configurable
 
-Primary closeout docs:
-- [Phase 1 closeout](docs/decisions/0009_phase1_closeout.md)
-- [Phase 1 evidence index](docs/baselines/20260421_phase1_evidence_index.md)
+Project history and evidence:
+- [Closeout decision](docs/decisions/0009_phase1_closeout.md)
+- [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
 
 ## What The Repo Does Today
 
@@ -46,7 +46,7 @@ This repo is **not**:
 - an authenticated trading system
 - a production execution stack
 - a polished dashboard product
-- a deployment-ready policy repo
+- a guaranteed profitable or deployment-ready policy repo
 
 The infrastructure is reusable. The current market binding, oracle anchoring, fair-value logic, and policy/calibration assumptions are still market-specific.
 
@@ -65,6 +65,26 @@ What the repo gives them is primarily **files and reports**, not a hosted applic
 - raw capture data under `data/raw/...`
 - normalized datasets under `data/normalized/...`
 - session, replay, calibration, and shadow artifacts under `artifacts/...`
+
+## Where To Make Your Own Tweaks
+
+If you want to adapt the tool for your own experiments, the main places to start are:
+
+- `configs/replay/`
+  - replay policy configs
+  - calibration configs
+  - classifier and comparison manifests
+- `scripts/`
+  - operational wrappers
+  - analysis entrypoints
+- `src/rtds/cli/`
+  - replay, calibration, comparison, and analysis CLIs
+- `src/rtds/`
+  - core capture, normalization, replay, and execution modules
+
+Practical rule:
+
+- changes to policy, calibration, market binding, or gating should be treated as **new experiments**, not as equivalent to the current documented evidence set
 
 ## Quickstart
 
@@ -112,23 +132,23 @@ Not implemented end to end:
 - a dedicated `build_snapshots` CLI
 - generic any-market Polymarket support without market-specific adaptation
 
-## Phase 1 Takeaways
+## Current Research Takeaways
 
-What Phase 1 established:
+What the current evidence set establishes:
 
 - there is real predictive structure in this market family under the repo’s oracle-anchored framing
 - calibration is consistently useful in replay
 - some modeled edge survives live-forward conditions on certain clean days
 - the current technique does **not** convert that edge consistently enough for deployment
 
-What Phase 1 rejected:
+What the current evidence set rejects:
 
 - “fills are the main problem”
 - a blanket stricter minimum-edge rule
 - a simple wide-delta exclusion rule
 - a deployment recommendation
 
-The strongest conditional finding from Phase 1 was:
+The strongest conditional finding so far is:
 
 - wide live-vs-replay calibrated fair-value divergence is a real failure state
 - the strongest second condition found was wide delta combined with replay up-side buckets (`lean_up` / `far_up`)
@@ -150,8 +170,8 @@ Key paths:
 
 Best starting docs:
 
-- [Phase 1 closeout](docs/decisions/0009_phase1_closeout.md)
-- [Phase 1 evidence index](docs/baselines/20260421_phase1_evidence_index.md)
+- [Closeout decision](docs/decisions/0009_phase1_closeout.md)
+- [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
 - [Capture runbook](docs/05_capture_runbook.md)
 - [Architecture overview](docs/architecture_overview.md)
 - [Market thesis](docs/market_thesis.md)
@@ -167,7 +187,7 @@ Schema and design docs:
 
 ## Bottom Line
 
-This repo is a **usable Phase 1 research and measurement engine**.
+This repo is a **usable research and measurement engine**.
 
 It successfully validated:
 
@@ -180,4 +200,4 @@ It did **not** validate:
 - a deployment-ready policy
 - a production trading system
 
-That is a real result, and the repo should be read in that frame.
+That is still a valuable result, and the repo should be read in that frame.
