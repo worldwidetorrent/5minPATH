@@ -93,6 +93,8 @@ Most useful commands:
 
 1. Bootstrap a local environment:
 
+Recommended interpreter: Python `3.12`
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate

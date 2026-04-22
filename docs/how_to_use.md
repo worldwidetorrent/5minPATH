@@ -22,6 +22,8 @@ Read these first:
 
 From repo root:
 
+Recommended interpreter: Python `3.12`
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
