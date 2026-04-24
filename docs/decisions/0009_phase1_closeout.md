@@ -103,9 +103,12 @@ What this repo should not claim from Phase 1:
 - a robust standalone conditional rule
 - a deployment recommendation
 
-If future work is reopened, it should be treated as a new named phase rather than a continuation of Phase 1.
+If future work is reopened, it should be treated as a separate project, not as a continuation of Phase 1.
 
-Recommended next phase name:
-- `Phase 2: Conditional Survival Refinement`
+Recommended next project name:
+- `Conditional Survival Refinement`
 
-That phase should start only by explicit choice, with a fresh bounded objective.
+That project should start only by explicit choice, with a fresh bounded objective and the same guardrails:
+- no production-ready policy claim
+- no robust standalone conditional-rule claim
+- no deployment recommendation without new evidence
