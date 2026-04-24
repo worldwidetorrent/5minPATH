@@ -25,7 +25,7 @@ By the close of Phase 1, the repo had accumulated:
   - Day 11
 
 The key evidence set is indexed in:
-- [`20260421_phase1_evidence_index.md`](/home/ubuntu/testingproject/docs/baselines/20260421_phase1_evidence_index.md)
+- [`20260421_phase1_evidence_index.md`](../baselines/20260421_phase1_evidence_index.md)
 
 ## What Was Built
 

@@ -22,7 +22,9 @@ Read these first:
 
 From repo root:
 
-Recommended interpreter: Python `3.12`
+Recommended and CI-validated interpreter: Python `3.12`.
+
+The package metadata allows Python `3.11+`, but Python `3.12` is the validated path used by CI.
 
 ```bash
 python3 -m venv .venv

@@ -22,6 +22,17 @@ Project history and evidence:
 - [Closeout decision](docs/decisions/0009_phase1_closeout.md)
 - [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
 
+## For Reviewers
+
+If you are reviewing this project quickly, start with:
+
+1. [SHOWCASE.md](SHOWCASE.md)
+2. [Closeout decision](docs/decisions/0009_phase1_closeout.md)
+3. [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
+4. [Sample outputs](docs/examples/sample_outputs.md)
+
+Short version: this is a completed research/data pipeline. It validated the measurement engine, but the tested strategy was not deployment-effective enough.
+
 ## What The Repo Does Today
 
 Out of the box, the repo can:
@@ -93,7 +104,9 @@ Most useful commands:
 
 1. Bootstrap a local environment:
 
-Recommended interpreter: Python `3.12`
+Recommended and CI-validated interpreter: Python `3.12`.
+
+The package metadata allows Python `3.11+`, but Python `3.12` is the validated path used by CI.
 
 ```bash
 python3 -m venv .venv
