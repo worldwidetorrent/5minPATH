@@ -9,7 +9,7 @@ The numbers below summarize the six clean shadow baseline days used in the final
 | Day | Edge Survival | 3-Trusted-Venue Rate | Side-Match Rate | Class |
 | --- | ---: | ---: | ---: | --- |
 | Day 4 | 0.75% | 3.20% | 96.6% | weak |
-| Day 7 | 33.7% | 82.67% | 96.2% | strong |
+| Day 7 | 33.72% | 82.67% | 96.2% | strong |
 | Day 8 | 0.94% | 93.74% | 55.2% | weak |
 | Day 9 | 5.37% | 21.13% | 65.4% | middle |
 | Day 10 | 7.09% | 76.42% | 53.3% | middle |

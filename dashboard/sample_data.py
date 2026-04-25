@@ -17,7 +17,7 @@ CLEAN_DAYS = [
     },
     {
         "day": "Day 7",
-        "survival_pct": 33.70,
+        "survival_pct": 33.72,
         "classification": "Strong",
         "main_drag": "Best alignment day",
         "trusted_venue_rate_pct": 82.67,
