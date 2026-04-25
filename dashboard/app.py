@@ -85,20 +85,6 @@ def inject_style() -> None:
             box-shadow: 0 28px 90px rgba(76, 53, 22, 0.14);
         }
 
-        .hero::after {
-            content: "";
-            position: absolute;
-            right: -5rem;
-            top: -5rem;
-            width: 20rem;
-            height: 20rem;
-            border-radius: 50%;
-            border: 1px solid rgba(24, 21, 16, 0.14);
-            box-shadow:
-                -3.5rem 5rem 0 rgba(83, 99, 62, 0.10),
-                -8rem 8rem 0 rgba(184, 98, 37, 0.08);
-        }
-
         .eyebrow {
             color: var(--amber);
             font-weight: 800;
@@ -296,6 +282,19 @@ def inject_style() -> None:
             background: linear-gradient(90deg, var(--amber), var(--rust));
         }
 
+        .fill-weak {
+            background: linear-gradient(90deg, #c76639, #7f351c);
+        }
+
+        .fill-middle,
+        .fill-lower-middle {
+            background: linear-gradient(90deg, #d79a32, #9b6a22);
+        }
+
+        .fill-strong {
+            background: linear-gradient(90deg, #78804c, #2f4b20);
+        }
+
         .pct {
             font-family: Georgia, "Times New Roman", serif;
             font-size: 1.4rem;
@@ -328,6 +327,65 @@ def inject_style() -> None:
         .tag-weak {
             color: #7f351c;
             background: rgba(127, 53, 28, 0.12);
+        }
+
+        .distribution-card {
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            padding: 1rem 1.1rem;
+            background: rgba(255, 252, 243, 0.66);
+            margin-bottom: 1rem;
+        }
+
+        .distribution-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            color: var(--muted);
+            font-size: 0.9rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .distribution-track {
+            position: relative;
+            height: 2.4rem;
+            border-radius: 999px;
+            background: rgba(24, 21, 16, 0.09);
+            border: 1px solid rgba(24, 21, 16, 0.09);
+        }
+
+        .distribution-dot {
+            position: absolute;
+            top: 50%;
+            width: 0.95rem;
+            height: 0.95rem;
+            border-radius: 999px;
+            transform: translate(-50%, -50%);
+            border: 2px solid rgba(255, 252, 243, 0.96);
+            box-shadow: 0 8px 22px rgba(24, 21, 16, 0.18);
+        }
+
+        .distribution-dot.weak {
+            background: #a94b2d;
+        }
+
+        .distribution-dot.middle,
+        .distribution-dot.lower-middle {
+            background: #d79a32;
+        }
+
+        .distribution-dot.strong {
+            background: #53633e;
+            width: 1.15rem;
+            height: 1.15rem;
+        }
+
+        .distribution-axis {
+            display: flex;
+            justify-content: space-between;
+            color: var(--muted);
+            font-size: 0.78rem;
+            margin-top: 0.55rem;
         }
 
         .table-legend {
@@ -525,7 +583,9 @@ def render_survival_bars(days: pd.DataFrame) -> None:
                 f"""
             <div class="bar-row">
               <div class="day-label">{escape(str(row["day"]))}</div>
-              <div class="track"><div class="fill" style="width: {width:.2f}%;"></div></div>
+              <div class="track">
+                <div class="fill fill-{escape(tag_class)}" style="width: {width:.2f}%;"></div>
+              </div>
               <div class="pct">{pct:.2f}%</div>
               <div><span class="tag tag-{escape(tag_class)}">
                 {escape(str(row["classification"]))}
@@ -535,6 +595,42 @@ def render_survival_bars(days: pd.DataFrame) -> None:
             )
         )
     html(f'<div class="bar-table">{"".join(rows)}</div>')
+
+
+def render_distribution_strip(days: pd.DataFrame) -> None:
+    max_value = float(days["survival_pct"].max())
+    dots = []
+    for row in days.to_dict("records"):
+        pct = float(row["survival_pct"])
+        left = 0 if max_value == 0 else pct / max_value * 100.0
+        class_name = str(row["classification"]).lower().replace(" ", "-")
+        title = f'{row["day"]}: {pct:.2f}% ({row["classification"]})'
+        dots.append(
+            html_fragment(
+                f"""
+                <span
+                  class="distribution-dot {escape(class_name)}"
+                  title="{escape(title)}"
+                  style="left: {left:.2f}%;"
+                ></span>
+                """
+            )
+        )
+    html(
+        f"""
+        <div class="distribution-card">
+          <div class="distribution-head">
+            <strong>Survival distribution</strong>
+            <span>Six clean days; one strong outlier pulls the mean above the median.</span>
+          </div>
+          <div class="distribution-track">{"".join(dots)}</div>
+          <div class="distribution-axis">
+            <span>0%</span>
+            <span>{max_value:.1f}%</span>
+          </div>
+        </div>
+        """
+    )
 
 
 def render_failure_cards(failures: pd.DataFrame) -> None:
@@ -657,6 +753,7 @@ for col, item in zip(evidence_cols, evidence_cards, strict=True):
         html(metric_card(*item))
 
 st.write("")
+render_distribution_strip(days)
 render_survival_bars(days)
 st.write("")
 html(
@@ -668,7 +765,9 @@ html(
       </div>
       <div class="legend-item">
         <div class="legend-title">3 trusted venues</div>
-        <div class="legend-copy">How often enough live venue state was available.</div>
+        <div class="legend-copy">
+          Percent of rows reaching the three-trusted-venue threshold required for a composite.
+        </div>
       </div>
       <div class="legend-item">
         <div class="legend-title">Side match</div>
