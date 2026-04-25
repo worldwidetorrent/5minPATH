@@ -32,6 +32,7 @@ If you are reviewing this project quickly, start with:
 2. [Closeout decision](docs/decisions/0009_phase1_closeout.md)
 3. [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
 4. [Sample outputs](docs/examples/sample_outputs.md)
+5. [Known limitations](docs/known_limitations.md)
 
 Short version: this is a completed research/data pipeline. It validated the measurement engine, but the tested strategy was not deployment-effective enough.
 
@@ -113,6 +114,22 @@ Practical rule:
 
 - changes to policy, calibration, market binding, or gating should be treated as **new experiments**, not as equivalent to the current documented evidence set
 
+## Repository Organization Note
+
+This is a research repo, so it preserves historical analysis scripts and diagnostics used to produce the final evidence set.
+
+For new users, the primary path is:
+
+1. README / [SHOWCASE.md](SHOWCASE.md)
+2. [How to use the repo](docs/how_to_use.md)
+3. [Command map](docs/command_map.md)
+4. [Scripts guide](scripts/README.md)
+5. `scripts/run_collectors.sh`
+6. `scripts/run_day_fast_lane.sh`
+7. optional `dashboard/`
+
+Most other scripts should be treated as reproducibility artifacts or research diagnostics, not as the main user interface.
+
 ## Quickstart
 
 Most useful commands:
@@ -156,6 +173,8 @@ python -m pytest -q
 
 For setup, capture modes, operational notes, artifact paths, and longer examples:
 - [How to use the repo](docs/how_to_use.md)
+- [Command map](docs/command_map.md)
+- [Scripts guide](scripts/README.md)
 - [Capture runbook](docs/05_capture_runbook.md)
 - [Current capabilities and validation boundary](docs/current_capabilities.md)
 
@@ -219,6 +238,9 @@ Key paths:
 Best starting docs:
 
 - [How to use the repo](docs/how_to_use.md)
+- [Command map](docs/command_map.md)
+- [Scripts guide](scripts/README.md)
+- [Known limitations](docs/known_limitations.md)
 - [Current capabilities and validation boundary](docs/current_capabilities.md)
 - [Closeout decision](docs/decisions/0009_phase1_closeout.md)
 - [Evidence index](docs/baselines/20260421_phase1_evidence_index.md)
