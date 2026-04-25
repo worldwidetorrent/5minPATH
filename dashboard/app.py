@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from textwrap import dedent
 
 import pandas as pd
 import streamlit as st
@@ -15,8 +16,16 @@ st.set_page_config(
 )
 
 
+def html(markup: str) -> None:
+    st.html(dedent(markup).strip())
+
+
+def html_fragment(markup: str) -> str:
+    return dedent(markup).strip()
+
+
 def inject_style() -> None:
-    st.markdown(
+    html(
         """
         <style>
         :root {
@@ -375,44 +384,46 @@ def inject_style() -> None:
             }
         }
         </style>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def section_open(eyebrow: str, title: str, body: str) -> None:
-    st.markdown(
+    html(
         f"""
         <div class="section-shell">
           <div class="eyebrow">{escape(eyebrow)}</div>
           <div class="section-title">{escape(title)}</div>
           <div class="section-copy">{escape(body)}</div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def section_close() -> None:
-    st.markdown("</div>", unsafe_allow_html=True)
+    html("</div>")
 
 
 def metric_card(note: str, value: str, label: str) -> str:
-    return f"""
+    return html_fragment(
+        f"""
     <div class="metric-card">
       <div class="metric-note">{escape(note)}</div>
       <div class="metric-value">{escape(value)}</div>
       <div class="metric-label">{escape(label)}</div>
     </div>
     """
+    )
 
 
 def insight_card(title: str, body: str) -> str:
-    return f"""
+    return html_fragment(
+        f"""
     <div class="insight-card">
       <div class="insight-title">{escape(title)}</div>
       <div class="insight-copy">{escape(body)}</div>
     </div>
     """
+    )
 
 
 def render_pipeline() -> None:
@@ -441,15 +452,17 @@ def render_pipeline() -> None:
     cards = []
     for index, (title, body) in enumerate(steps, start=1):
         cards.append(
-            f"""
+            html_fragment(
+                f"""
             <div class="step-card">
               <div class="step-index">{index}</div>
               <div class="step-title">{escape(title)}</div>
               <div class="step-copy">{escape(body)}</div>
             </div>
             """
+            )
         )
-    st.markdown(f'<div class="pipeline">{"".join(cards)}</div>', unsafe_allow_html=True)
+    html(f'<div class="pipeline">{"".join(cards)}</div>')
 
 
 def render_survival_bars(days: pd.DataFrame) -> None:
@@ -460,7 +473,8 @@ def render_survival_bars(days: pd.DataFrame) -> None:
         width = 100.0 if max_value == 0 else max(2.5, pct / max_value * 100.0)
         tag_class = str(row["classification"]).lower().replace(" ", "-")
         rows.append(
-            f"""
+            html_fragment(
+                f"""
             <div class="bar-row">
               <div class="day-label">{escape(str(row["day"]))}</div>
               <div class="track"><div class="fill" style="width: {width:.2f}%;"></div></div>
@@ -470,15 +484,16 @@ def render_survival_bars(days: pd.DataFrame) -> None:
               </span></div>
             </div>
             """
+            )
         )
-    st.markdown(f'<div class="bar-table">{"".join(rows)}</div>', unsafe_allow_html=True)
+    html(f'<div class="bar-table">{"".join(rows)}</div>')
 
 
 def render_failure_cards(failures: pd.DataFrame) -> None:
     cols = st.columns(3)
     for col, row in zip(cols, failures.to_dict("records"), strict=True):
         with col:
-            st.markdown(
+            html(
                 f"""
                 <div class="failure-card">
                   <div class="failure-rank">{int(row["rank"])}</div>
@@ -487,8 +502,7 @@ def render_failure_cards(failures: pd.DataFrame) -> None:
                     <div class="failure-copy">{escape(str(row["summary"]))}</div>
                   </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
 
@@ -502,20 +516,18 @@ median_survival = days["survival_pct"].median()
 max_survival = days["survival_pct"].max()
 strong_days = int((days["classification"] == "Strong").sum())
 
-st.markdown(
+html(
     """
     <div class="hero">
-      <div class="eyebrow">5-minute prediction-market research</div>
+      <div class="eyebrow">5-MINUTE PREDICTION-MARKET ANALYSIS &amp; TESTING HARNESS</div>
       <h1 class="hero-title">5minPATH</h1>
       <p class="hero-subtitle">
-        A reusable capture, replay, calibration, and live-forward shadow
-        measurement engine for testing whether modeled edge survives real
-        market conditions.
+        A research engine for testing whether modeled edge in 5-minute
+        prediction markets survives live market conditions.
       </p>
       <div class="verdict">Validated measurement engine. No deployment recommendation.</div>
     </div>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 
 st.write("")
@@ -525,17 +537,17 @@ metric_items = [
     ("Outcome", "Built", "Research/data pipeline"),
     ("Replay signal", "Real", "Calibration repeatedly helped"),
     ("Live survival", f"{median_survival:.1f}%", "Median across clean days"),
-    ("Deployment", "No", "Current strategy too inconsistent"),
+    ("Deployment", "Not recommended", "Not from this tested strategy"),
 ]
 for col, item in zip(metric_cols, metric_items, strict=True):
     with col:
-        st.markdown(metric_card(*item), unsafe_allow_html=True)
+        html(metric_card(*item))
 
 section_open(
     "System",
     "What this tool does",
-    "The repo is a research pipeline, not an execution product. It helps a user gather "
-    "market data, replay it, test calibration, and measure live-forward survival.",
+    "5minPATH is a controlled harness for capture, replay, calibration, and "
+    "shadow evaluation. It is not an execution product.",
 )
 render_pipeline()
 section_close()
@@ -546,7 +558,7 @@ section_open(
     "The project found legitimate replay signal, but the tested strategy did not convert "
     "that signal into consistent live-shadow economics.",
 )
-insight_cols = st.columns(3)
+insight_cols = st.columns(4)
 insights = [
     (
         "What worked",
@@ -560,13 +572,18 @@ insights = [
     ),
     (
         "Why it matters",
-        "The tool is valuable because it tells the truth about conversion from replay edge "
-        "to live-forward tradability.",
+        "Backtests can overstate edge. 5minPATH measures whether modeled edge survives "
+        "live-forward market conditions.",
+    ),
+    (
+        "Reusable engine",
+        "The tested strategy was not deployment-effective, but the capture/replay/shadow "
+        "pipeline is reusable for future strategy experiments.",
     ),
 ]
 for col, item in zip(insight_cols, insights, strict=True):
     with col:
-        st.markdown(insight_card(*item), unsafe_allow_html=True)
+        html(insight_card(*item))
 section_close()
 
 section_open(
@@ -583,7 +600,7 @@ evidence_cards = [
 ]
 for col, item in zip(evidence_cols, evidence_cards, strict=True):
     with col:
-        st.markdown(metric_card(*item), unsafe_allow_html=True)
+        html(metric_card(*item))
 
 st.write("")
 render_survival_bars(days)
@@ -599,6 +616,13 @@ display_days = days.rename(
         "side_match_rate_pct": "Side-match rate %",
     }
 )
+display_days["Edge survival %"] = display_days["Edge survival %"].map("{:.2f}%".format)
+display_days["3-trusted-venue rate %"] = display_days[
+    "3-trusted-venue rate %"
+].map("{:.2f}%".format)
+display_days["Side-match rate %"] = display_days["Side-match rate %"].map(
+    "{:.1f}%".format
+)
 st.dataframe(
     display_days[
         [
@@ -611,27 +635,26 @@ st.dataframe(
         ]
     ],
     hide_index=True,
-    use_container_width=True,
+    width="stretch",
 )
 section_close()
 
 section_open(
-    "Failure anatomy",
+    "FAILURE ANATOMY",
     "What blocked deployment effectiveness",
     "The main issue was not top-of-book fill mechanics. The strategy mostly lost edge "
     "before that point: first through availability, then through directional disagreement.",
 )
 render_failure_cards(failure_hierarchy)
 st.write("")
-st.markdown(
+html(
     """
     <div class="callout">
       <strong>Plain-English conclusion:</strong>
-      the market showed real structure, and the system measured it. The first harvesting
-      method was too regime-dependent to recommend for deployment.
+      the market showed real structure, and the system measured it. The tested strategy
+      was too regime-dependent to recommend for deployment.
     </div>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 section_close()
 
@@ -649,5 +672,5 @@ scope_items = [
 ]
 for col, item in zip(scope_cols, scope_items, strict=True):
     with col:
-        st.markdown(insight_card(*item), unsafe_allow_html=True)
+        html(insight_card(*item))
 section_close()
