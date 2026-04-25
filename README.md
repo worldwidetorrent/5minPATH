@@ -36,6 +36,23 @@ If you are reviewing this project quickly, start with:
 
 Short version: this is a completed research/data pipeline. It validated the measurement engine, but the tested strategy was not deployment-effective enough.
 
+## Built With Codex
+
+`5minPATH` was developed with Codex as an AI coding partner.
+
+Codex helped turn a market hypothesis into a tested research/data pipeline across capture, normalization, replay, calibration, live-forward shadow measurement, diagnostics, documentation, and the optional showcase dashboard.
+
+The repo is intentionally structured to be agent-friendly:
+
+- clear docs and decision records
+- repeatable CLI workflows
+- isolated configs and scripts
+- explicit validation boundaries
+- tests and lint checks
+- artifact-first outputs
+
+Future users can pair this repo with Codex or another AI coding agent to adapt the capture/replay/shadow pipeline for new strategy experiments. Changes to policy, calibration, market binding, or gating should still be treated as new experiments.
+
 ## Optional Showcase Dashboard
 
 A lightweight Streamlit dashboard is available under `dashboard/`.

@@ -32,6 +32,12 @@ Calibration repeatedly improved replay economics, and some modeled edge survived
 - cross-day diagnostics for edge survival and failure modes
 - closeout docs that state what the evidence does and does not support
 
+## Built With Codex
+
+This project was developed with Codex as an AI coding partner. Codex helped design, implement, test, debug, document, and polish the capture/replay/calibration/shadow workflow and optional dashboard.
+
+The repo is also structured for future AI-assisted work: clear docs, repeatable commands, explicit configs, tests, and artifact-first outputs make it easier for Codex or another agent to inspect and extend new research experiments.
+
 ## What The Evidence Says
 
 The strongest summary is:
