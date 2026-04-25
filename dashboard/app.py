@@ -183,7 +183,7 @@ def inject_style() -> None:
             font-size: 2.65rem;
             font-weight: 700;
             line-height: 1;
-            letter-spacing: -0.06em;
+            letter-spacing: -0.035em;
         }
 
         .metric-label {
@@ -546,7 +546,7 @@ metric_items = [
     ("Outcome", "Built", "Research/data pipeline"),
     ("Replay signal", "Real", "Calibration repeatedly helped"),
     ("Live survival", f"{median_survival:.1f}%", "Median across clean days"),
-    ("Deployment", "Not yet", "Not from this tested strategy"),
+    ("Deployment", "Not\u00a0yet", "Not from this tested strategy"),
 ]
 for col, item in zip(metric_cols, metric_items, strict=True):
     with col:
