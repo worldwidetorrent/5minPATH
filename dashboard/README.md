@@ -28,6 +28,8 @@ streamlit run dashboard/app.py
 
 ## What It Shows
 
+The static comparison values are copied from `docs/examples/sample_outputs.md` and the final clean-shadow condition panel artifact at `artifacts/diagnostics/clean_shadow_condition_panel/20260421T010000Z/summary.json`.
+
 - what `5minPATH` is
 - what the project tested
 - what the six clean-shadow days showed

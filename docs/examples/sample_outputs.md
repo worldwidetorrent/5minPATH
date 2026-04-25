@@ -2,18 +2,18 @@
 
 This page gives a quick view of the kind of output `5minPATH` produces without requiring a reader to run a full capture first.
 
-The numbers below summarize the six clean shadow baseline days used in the final evidence set.
+The numbers below summarize the six clean shadow baseline days used in the final evidence set. The survival, 3-trusted-venue, and side-match rates are copied from `artifacts/diagnostics/clean_shadow_condition_panel/20260421T010000Z/summary.json`.
 
 ## Clean Shadow Edge Survival
 
-| Day | Edge Survival | Class |
-| --- | ---: | --- |
-| Day 4 | 0.75% | weak |
-| Day 7 | 33.7% | strong |
-| Day 8 | 0.94% | weak |
-| Day 9 | 5.37% | middle |
-| Day 10 | 7.09% | middle |
-| Day 11 | 3.78% | lower-middle |
+| Day | Edge Survival | 3-Trusted-Venue Rate | Side-Match Rate | Class |
+| --- | ---: | ---: | ---: | --- |
+| Day 4 | 0.75% | 3.20% | 96.6% | weak |
+| Day 7 | 33.7% | 82.67% | 96.2% | strong |
+| Day 8 | 0.94% | 93.74% | 55.2% | weak |
+| Day 9 | 5.37% | 21.13% | 65.4% | middle |
+| Day 10 | 7.09% | 76.42% | 53.3% | middle |
+| Day 11 | 3.78% | 29.62% | 66.5% | middle |
 
 Distribution summary:
 
