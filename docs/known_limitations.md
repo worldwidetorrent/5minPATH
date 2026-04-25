@@ -16,7 +16,7 @@ Shadow measurement is for live-forward tradability analysis only.
 
 ## Technical User Required
 
-The tool produces files, reports, and a local optional dashboard.
+The tool produces files, reports, and an optional local dashboard.
 
 It assumes comfort with Python, CLI workflows, JSONL artifacts, and report inspection.
 

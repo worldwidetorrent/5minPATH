@@ -61,7 +61,7 @@ This repo is not:
 
 - a generic any-market Polymarket toolkit
 - a hosted application
-- a dashboard product
+- a hosted or production dashboard product
 - an authenticated trading system
 - a deployment-ready policy package
 

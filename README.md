@@ -90,10 +90,12 @@ This repo is **not**:
 - a generic “point it at any Polymarket market and it just works” toolkit
 - an authenticated trading system
 - a production execution stack
-- a polished dashboard product
+- a hosted or production dashboard product
 - a guaranteed profitable or deployment-ready policy repo
 
 The infrastructure is reusable. The current market binding, oracle anchoring, fair-value logic, and policy/calibration assumptions are still market-specific.
+
+This repository is for research and measurement only. It is not financial advice and does not recommend live trading.
 
 ## What A New User Can Actually Do
 
