@@ -345,6 +345,21 @@ def inject_style() -> None:
             margin-bottom: 1rem;
         }
 
+        .sample-note {
+            border: 1px solid rgba(127, 53, 28, 0.18);
+            border-radius: 16px;
+            padding: 0.82rem 0.95rem;
+            background: rgba(127, 53, 28, 0.07);
+            color: var(--muted);
+            font-size: 0.92rem;
+            line-height: 1.45;
+            margin: 0.2rem 0 1rem;
+        }
+
+        .sample-note strong {
+            color: var(--rust);
+        }
+
         .distribution-head {
             display: flex;
             justify-content: space-between;
@@ -862,6 +877,15 @@ for col, item in zip(evidence_cols, evidence_cards, strict=True):
         html(metric_card(*item))
 
 st.write("")
+html(
+    """
+    <div class="sample-note">
+      <strong>Small sample note:</strong>
+      this comparison uses six clean-shadow days. Treat the survival statistics as
+      directional evidence, not a stable long-run estimate.
+    </div>
+    """
+)
 render_distribution_strip(days)
 render_survival_bars(days)
 st.write("")
