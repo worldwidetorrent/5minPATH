@@ -56,6 +56,14 @@ def inject_style() -> None:
             padding-bottom: 4rem;
         }
 
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        #MainMenu {
+            display: none;
+            visibility: hidden;
+        }
+
         h1, h2, h3 {
             font-family: Georgia, "Times New Roman", serif;
             color: var(--ink);
@@ -292,7 +300,7 @@ def inject_style() -> None:
         }
 
         .fill-strong {
-            background: linear-gradient(90deg, #78804c, #2f4b20);
+            background: linear-gradient(90deg, #4fba4f, #176b2c);
         }
 
         .pct {
@@ -314,8 +322,8 @@ def inject_style() -> None:
         }
 
         .tag-strong {
-            color: #2f4b20;
-            background: rgba(83, 99, 62, 0.13);
+            color: #176b2c;
+            background: rgba(47, 145, 57, 0.16);
         }
 
         .tag-middle,
@@ -348,10 +356,11 @@ def inject_style() -> None:
 
         .distribution-track {
             position: relative;
-            height: 2.4rem;
+            height: 3.2rem;
             border-radius: 999px;
             background: rgba(24, 21, 16, 0.09);
             border: 1px solid rgba(24, 21, 16, 0.09);
+            overflow: visible;
         }
 
         .distribution-dot {
@@ -375,9 +384,47 @@ def inject_style() -> None:
         }
 
         .distribution-dot.strong {
-            background: #53633e;
+            background: #1f8d3a;
             width: 1.15rem;
             height: 1.15rem;
+        }
+
+        .distribution-tick {
+            position: absolute;
+            top: 0.32rem;
+            bottom: 0.32rem;
+            width: 2px;
+            transform: translateX(-50%);
+            background: rgba(24, 21, 16, 0.32);
+        }
+
+        .distribution-tick.mean {
+            background: rgba(184, 95, 35, 0.58);
+        }
+
+        .distribution-tick.median {
+            background: rgba(83, 99, 62, 0.58);
+        }
+
+        .tick-label {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            font-size: 0.72rem;
+            font-weight: 850;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .distribution-tick.mean .tick-label {
+            top: -1.15rem;
+            color: var(--rust);
+        }
+
+        .distribution-tick.median .tick-label {
+            bottom: -1.15rem;
+            color: var(--moss);
         }
 
         .distribution-axis {
@@ -385,7 +432,43 @@ def inject_style() -> None:
             justify-content: space-between;
             color: var(--muted);
             font-size: 0.78rem;
-            margin-top: 0.55rem;
+            margin-top: 1rem;
+        }
+
+        .distribution-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-top: 0.8rem;
+        }
+
+        .day-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.32rem 0.58rem;
+            border-radius: 999px;
+            border: 1px solid rgba(24, 21, 16, 0.12);
+            background: rgba(255, 255, 255, 0.48);
+            color: var(--muted);
+            font-size: 0.76rem;
+            font-weight: 800;
+        }
+
+        .day-chip.weak {
+            color: #7f351c;
+            background: rgba(127, 53, 28, 0.10);
+        }
+
+        .day-chip.middle,
+        .day-chip.lower-middle {
+            color: #76501a;
+            background: rgba(215, 154, 50, 0.14);
+        }
+
+        .day-chip.strong {
+            color: #176b2c;
+            background: rgba(47, 145, 57, 0.14);
         }
 
         .table-legend {
@@ -598,11 +681,13 @@ def render_survival_bars(days: pd.DataFrame) -> None:
 
 
 def render_distribution_strip(days: pd.DataFrame) -> None:
-    max_value = float(days["survival_pct"].max())
+    axis_max = 50.0
+    mean_value = float(days["survival_pct"].mean())
+    median_value = float(days["survival_pct"].median())
     dots = []
     for row in days.to_dict("records"):
         pct = float(row["survival_pct"])
-        left = 0 if max_value == 0 else pct / max_value * 100.0
+        left = min(100.0, pct / axis_max * 100.0)
         class_name = str(row["classification"]).lower().replace(" ", "-")
         title = f'{row["day"]}: {pct:.2f}% ({row["classification"]})'
         dots.append(
@@ -616,6 +701,20 @@ def render_distribution_strip(days: pd.DataFrame) -> None:
                 """
             )
         )
+    chips = []
+    for row in sorted(days.to_dict("records"), key=lambda item: float(item["survival_pct"])):
+        class_name = str(row["classification"]).lower().replace(" ", "-")
+        chips.append(
+            html_fragment(
+                f"""
+                <span class="day-chip {escape(class_name)}">
+                  {escape(str(row["day"]))} {float(row["survival_pct"]):.2f}%
+                </span>
+                """
+            )
+        )
+    mean_left = min(100.0, mean_value / axis_max * 100.0)
+    median_left = min(100.0, median_value / axis_max * 100.0)
     html(
         f"""
         <div class="distribution-card">
@@ -623,11 +722,21 @@ def render_distribution_strip(days: pd.DataFrame) -> None:
             <strong>Survival distribution</strong>
             <span>Six clean days; one strong outlier pulls the mean above the median.</span>
           </div>
-          <div class="distribution-track">{"".join(dots)}</div>
+          <div class="distribution-track">
+            <span class="distribution-tick mean" style="left: {mean_left:.2f}%;">
+              <span class="tick-label">mean {mean_value:.1f}%</span>
+            </span>
+            <span class="distribution-tick median" style="left: {median_left:.2f}%;">
+              <span class="tick-label">median {median_value:.1f}%</span>
+            </span>
+            {"".join(dots)}
+          </div>
           <div class="distribution-axis">
             <span>0%</span>
-            <span>{max_value:.1f}%</span>
+            <span>fixed 50% axis</span>
+            <span>{axis_max:.0f}%</span>
           </div>
+          <div class="distribution-chips">{"".join(chips)}</div>
         </div>
         """
     )
