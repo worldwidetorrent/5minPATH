@@ -1,4 +1,6 @@
-# 5minPATH
+# 5-Minute Prediction-Market Analysis & Testing Harness
+
+**5minPATH**
 
 `5minPATH` is a data-first research system for capturing, replaying, calibrating, and live-shadow-evaluating **5-minute BTC Polymarket markets that resolve on Chainlink**.
 
