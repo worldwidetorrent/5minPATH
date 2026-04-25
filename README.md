@@ -33,6 +33,19 @@ If you are reviewing this project quickly, start with:
 
 Short version: this is a completed research/data pipeline. It validated the measurement engine, but the tested strategy was not deployment-effective enough.
 
+## Optional Showcase Dashboard
+
+A lightweight Streamlit dashboard is available under `dashboard/`.
+
+It is a read-only presentation layer over static evidence and sample summaries. It is not required to use the core capture/replay/shadow pipeline, and it does not run capture, replay, calibration, shadow measurement, artifact mutation, or trading execution.
+
+Run locally:
+
+```bash
+python -m pip install -e '.[dashboard]'
+streamlit run dashboard/app.py
+```
+
 ## What The Repo Does Today
 
 Out of the box, the repo can:

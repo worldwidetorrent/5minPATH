@@ -1,10 +1,17 @@
 # 5minPATH Dashboard
 
-This is a lightweight read-only showcase dashboard for the `5minPATH` research tool.
+This is an optional read-only showcase dashboard for the completed `5minPATH` research/data pipeline.
 
-It does not run capture, replay, calibration, or shadow measurement. It only presents the main project result in a reviewer-friendly format.
+It does not run capture, replay, calibration, shadow measurement, artifact mutation, or trading execution. It only presents the main project result in a reviewer-friendly format.
 
-## Run
+## Run Locally
+
+```bash
+python -m pip install -e '.[dashboard]'
+streamlit run dashboard/app.py
+```
+
+Alternative minimal install:
 
 ```bash
 python -m pip install streamlit pandas
