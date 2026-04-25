@@ -102,10 +102,12 @@ def inject_style() -> None:
         .eyebrow {
             color: var(--amber);
             font-weight: 800;
-            letter-spacing: 0.14em;
+            letter-spacing: 0.09em;
             text-transform: uppercase;
             font-size: 0.76rem;
             margin-bottom: 0.5rem;
+            word-spacing: 0;
+            white-space: normal;
         }
 
         .hero-title {
@@ -382,6 +384,11 @@ def inject_style() -> None:
             .section-shell {
                 padding: 1.2rem;
             }
+
+            .eyebrow {
+                letter-spacing: 0.055em;
+                font-size: 0.68rem;
+            }
         }
         </style>
         """
@@ -446,7 +453,7 @@ def render_pipeline() -> None:
         ),
         (
             "Shadow",
-            "Measures whether modeled edge survives live-forward, execution-side conditions.",
+            "Measures whether modeled edge survives live forward execution-side conditions.",
         ),
     ]
     cards = []
@@ -525,7 +532,9 @@ html(
         A research engine for testing whether modeled edge in 5-minute
         prediction markets survives live market conditions.
       </p>
-      <div class="verdict">Validated measurement engine. No deployment recommendation.</div>
+      <div class="verdict">
+        Validated measurement engine. Tested strategy not deployment-effective.
+      </div>
     </div>
     """
 )
@@ -537,7 +546,7 @@ metric_items = [
     ("Outcome", "Built", "Research/data pipeline"),
     ("Replay signal", "Real", "Calibration repeatedly helped"),
     ("Live survival", f"{median_survival:.1f}%", "Median across clean days"),
-    ("Deployment", "Not recommended", "Not from this tested strategy"),
+    ("Deployment", "Not yet", "Not from this tested strategy"),
 ]
 for col, item in zip(metric_cols, metric_items, strict=True):
     with col:
@@ -573,7 +582,7 @@ insights = [
     (
         "Why it matters",
         "Backtests can overstate edge. 5minPATH measures whether modeled edge survives "
-        "live-forward market conditions.",
+        "live forward market conditions.",
     ),
     (
         "Reusable engine",
