@@ -139,6 +139,14 @@ def inject_style() -> None:
             font-weight: 800;
         }
 
+        .hero-gloss {
+            color: var(--muted);
+            font-size: 0.98rem;
+            line-height: 1.55;
+            max-width: 760px;
+            margin-top: 0.85rem;
+        }
+
         .section-shell {
             margin-top: 2.3rem;
             padding: 2rem;
@@ -322,6 +330,35 @@ def inject_style() -> None:
             background: rgba(127, 53, 28, 0.12);
         }
 
+        .table-legend {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.85rem;
+            margin: 1rem 0 0.85rem;
+        }
+
+        .legend-item {
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 0.85rem 0.95rem;
+            background: rgba(255, 252, 243, 0.66);
+        }
+
+        .legend-title {
+            color: var(--rust);
+            font-size: 0.75rem;
+            font-weight: 850;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 0.35rem;
+        }
+
+        .legend-copy {
+            color: var(--muted);
+            font-size: 0.88rem;
+            line-height: 1.38;
+        }
+
         .failure-card {
             display: grid;
             grid-template-columns: 3rem 1fr;
@@ -375,6 +412,10 @@ def inject_style() -> None:
             .bar-row {
                 grid-template-columns: 1fr;
                 gap: 0.55rem;
+            }
+
+            .table-legend {
+                grid-template-columns: 1fr;
             }
 
             .hero {
@@ -535,6 +576,10 @@ html(
       <div class="verdict">
         Validated measurement engine. Tested strategy not deployment-effective.
       </div>
+      <div class="hero-gloss">
+        In plain English: the tool worked, the replay signal was real, but this specific
+        strategy did not survive live market conditions consistently enough.
+      </div>
     </div>
     """
 )
@@ -614,6 +659,24 @@ for col, item in zip(evidence_cols, evidence_cards, strict=True):
 st.write("")
 render_survival_bars(days)
 st.write("")
+html(
+    """
+    <div class="table-legend">
+      <div class="legend-item">
+        <div class="legend-title">Edge survival</div>
+        <div class="legend-copy">How much modeled replay edge remained live.</div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-title">3 trusted venues</div>
+        <div class="legend-copy">How often enough live venue state was available.</div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-title">Side match</div>
+        <div class="legend-copy">How often live direction agreed with replay direction.</div>
+      </div>
+    </div>
+    """
+)
 
 display_days = days.rename(
     columns={
